@@ -66,7 +66,7 @@ pub(crate) fn block_texture_pixel(block: Block, x: u32, y: u32) -> u8 {
         Block::OakLog | Block::OakLogX | Block::OakLogZ => (232, 30),
         Block::Cobblestone => (232, 32),
         Block::Bricks => (238, 22),
-        Block::Snow => (252, 5),
+        Block::Snow => (248, 4),
         Block::Gravel => (235, 28),
         Block::Obsidian => (20, 7),
         Block::GoldBlock => (244, 14),
@@ -81,7 +81,9 @@ pub(crate) fn block_texture_pixel(block: Block, x: u32, y: u32) -> u8 {
 
     let spread = variation * 2 + 1;
     let grain = (hash % spread as u32) as i32 - variation;
-    let fleck = if hash.rotate_left(11) % 19 == 0 {
+    let fleck = if block == Block::Snow {
+        0
+    } else if hash.rotate_left(11) % 19 == 0 {
         -22
     } else if hash.rotate_left(19) % 23 == 0 {
         10
@@ -135,12 +137,18 @@ pub(crate) fn block_texture_pixel(block: Block, x: u32, y: u32) -> u8 {
             }
         }
         Block::Snow => {
-            if hash % 41 == 0 {
-                214
-            } else if hash.rotate_left(9) % 19 == 0 {
-                239
+            let cell_x = (x + (y / 4) % 2) / 2;
+            let cell_y = y / 2;
+            let mut patch_hash =
+                cell_x.wrapping_mul(0x9e37_79b9) ^ cell_y.wrapping_mul(0x85eb_ca6b);
+            patch_hash ^= patch_hash >> 16;
+            patch_hash = patch_hash.wrapping_mul(0x7feb_352d);
+            patch_hash ^= patch_hash >> 15;
+            let patch = (patch_hash % 7) as i32 - 3;
+            if hash.rotate_left(9) % 127 == 0 {
+                228
             } else {
-                grain_value as u8
+                (grain_value + patch).clamp(238, 255) as u8
             }
         }
         Block::Gravel => {

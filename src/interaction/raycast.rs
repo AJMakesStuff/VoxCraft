@@ -233,7 +233,7 @@ fn edit_block(params: BlockEditParams) {
         selection,
         player,
         mut world,
-        hotbar,
+        mut hotbar,
         particle_assets,
         mut commands,
         mut meshes,
@@ -253,6 +253,12 @@ fn edit_block(params: BlockEditParams) {
             edited = Some((hit.block, Block::Air));
             broken = Some((hit.block, block));
         }
+    } else if buttons.just_pressed(MouseButton::Middle) {
+        let block = match world.block_at(hit.block) {
+            Block::OakLogX | Block::OakLogZ => Block::OakLog,
+            block => block,
+        };
+        hotbar.replace_selected(block);
     } else if buttons.just_pressed(MouseButton::Right) {
         let pos = hit.previous;
         let Ok(player) = player.single() else {

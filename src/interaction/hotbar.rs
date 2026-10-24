@@ -37,7 +37,13 @@ impl Hotbar {
     }
 
     pub fn replace_selected(&mut self, block: Block) {
-        self.slots[self.selected] = block;
+        self.replace_slot(self.selected, block);
+    }
+
+    pub fn replace_slot(&mut self, slot: usize, block: Block) {
+        if slot < HOTBAR_SLOTS {
+            self.slots[slot] = block;
+        }
     }
 }
 

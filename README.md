@@ -35,11 +35,12 @@ Render distance is measured in horizontal chunks and is clamped to 2–16. Mouse
 | Left Ctrl while flying | Descend; touching down exits flight |
 | Left Shift | Sprint and move faster while flying |
 | Left mouse | Break targeted block (bedrock is unbreakable) |
+| Middle mouse | Pick the targeted block into the selected hotbar slot |
 | Right mouse | Place selected block; oak logs align to the face you place against |
 | 1–5 | Select a hotbar slot |
-| E | Open the block picker for the selected hotbar slot |
+| E | Open or close the block picker; click or drag blocks onto hotbar slots |
 | Escape | Open the pause menu; save, resume, change options, or return to the main menu |
-| Options | Use − / + to change mouse sensitivity, render distance, and anti-aliasing; toggle V-Sync and fullscreen; changes apply immediately |
+| Options | Adjust mouse sensitivity, display mode/resolution, FOV, render distance, anti-aliasing, V-Sync/adaptive presentation, brightness, contrast, gamma, and HDR rendering |
 | F3 | Toggle coordinates and chunk debug information |
 
 ## Architecture
@@ -48,11 +49,13 @@ Render distance is measured in horizontal chunks and is clamped to 2–16. Mouse
 - `src/player/` contains the first-person camera, mouse look, movement, gravity, jumping, sprinting, flight, and an axis-aligned collision controller.
 - `src/interaction/` contains a voxel grid raycast, block selection, breaking particles, placement, and outline drawing.
 - `src/rendering/` sets up the directional sunlight, ambient light, world material, blue sky clear color, and applies the selected MSAA level to the player camera.
-- `src/ui/` creates the main menu, mouse sensitivity and graphics options (render distance, anti-aliasing, V-Sync, and fullscreen), pause menu, image-only square hotbar and block picker, crosshair, and F3 debug text. Block cube icons are generated from the block face colors at startup.
+- `src/ui/` creates the main menu, mouse sensitivity and graphics options (display mode/resolution, FOV, render distance, anti-aliasing, V-Sync/adaptive presentation, color calibration, and HDR rendering), pause menu, image-only square hotbar and block picker, crosshair, and F3 debug text. Block cube icons are generated from the block face colors at startup.
+
+Graphics options apply immediately. Adaptive V-Sync uses the backend's adaptive presentation mode when available; G-Sync and FreeSync remain controlled by the graphics driver. The HDR option enables Bevy's higher-precision camera rendering path, but Bevy does not currently provide HDR output to the monitor.
 
 Chunk generation and mesh assembly run on Bevy's async compute pool; completed meshes are uploaded in a paced main-thread queue. Returning to the main menu unloads terrain, cancels pending chunk work, clears edits, and resets the player spawn. Blocks use a generated 16 × 16 pixel texture atlas with nearest-neighbor sampling and vertex colors for face shading, so the project has no external asset downloads or copyrighted game assets.
 
-The pause menu saves one local world slot, including its terrain seed, block edits, player position and view direction, and hotbar. Loading regenerates the terrain from that saved seed, so the landscape is the same each time; saved block edits are reapplied afterward. The main menu loads that save. On Windows, the save file is stored at `%APPDATA%\VoxCraft\save.json`.
+The pause menu saves one local world slot, including its terrain seed, block edits, player position and view direction, and hotbar. Loading regenerates the terrain from that saved seed, so the landscape is the same each time; saved block edits are reapplied afterward. The main menu loads that save. Mouse sensitivity is stored separately and saved whenever it changes. On Windows, these files are stored at `%APPDATA%\VoxCraft\save.json` and `%APPDATA%\VoxCraft\settings.json`.
 
 ## Checks
 

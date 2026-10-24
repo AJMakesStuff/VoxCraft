@@ -10,6 +10,24 @@ use crate::{
     world::WorldPlugin,
 };
 
+use super::save::load_mouse_sensitivity;
+
+pub const DISPLAY_RESOLUTIONS: [(u32, u32); 5] = [
+    (1280, 720),
+    (1600, 900),
+    (1920, 1080),
+    (2560, 1440),
+    (3840, 2160),
+];
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DisplayMode {
+    #[default]
+    Windowed,
+    Borderless,
+    Fullscreen,
+}
+
 #[derive(Resource, Clone, Copy, Debug)]
 pub struct GameSettings {
     pub seed: u32,
@@ -17,7 +35,16 @@ pub struct GameSettings {
     pub render_distance: i32,
     pub mouse_sensitivity: f32,
     pub vsync_enabled: bool,
+    pub adaptive_sync_enabled: bool,
     pub anti_aliasing_samples: u32,
+    pub display_mode: DisplayMode,
+    /// Zero selects the current monitor's native size; other values index DISPLAY_RESOLUTIONS.
+    pub resolution_index: usize,
+    pub field_of_view_degrees: f32,
+    pub brightness: f32,
+    pub contrast: f32,
+    pub gamma: f32,
+    pub hdr_enabled: bool,
 }
 
 impl GameSettings {
@@ -26,9 +53,17 @@ impl GameSettings {
             seed: fresh_seed(),
             seed_override: None,
             render_distance: 8,
-            mouse_sensitivity: 0.0022,
+            mouse_sensitivity: load_mouse_sensitivity().unwrap_or(0.0022),
             vsync_enabled: false,
+            adaptive_sync_enabled: false,
             anti_aliasing_samples: 4,
+            display_mode: DisplayMode::Windowed,
+            resolution_index: 0,
+            field_of_view_degrees: 75.0,
+            brightness: 1.0,
+            contrast: 1.0,
+            gamma: 1.0,
+            hdr_enabled: false,
         };
         for arg in std::env::args().skip(1) {
             if let Some(value) = arg.strip_prefix("--seed=") {
@@ -70,6 +105,26 @@ impl GameSettings {
             (4, 1) | (2, -1) => 1,
             (samples, _) => samples,
         };
+    }
+
+    pub fn step_display_mode(&mut self, direction: i8) {
+        let index = match self.display_mode {
+            DisplayMode::Windowed => 0,
+            DisplayMode::Borderless => 1,
+            DisplayMode::Fullscreen => 2,
+        };
+        let next = (index + direction.signum() as i32).rem_euclid(3);
+        self.display_mode = match next {
+            0 => DisplayMode::Windowed,
+            1 => DisplayMode::Borderless,
+            _ => DisplayMode::Fullscreen,
+        };
+    }
+
+    pub fn step_resolution(&mut self, direction: i8) {
+        let count = DISPLAY_RESOLUTIONS.len() as i32 + 1;
+        self.resolution_index =
+            (self.resolution_index as i32 + direction.signum() as i32).rem_euclid(count) as usize;
     }
 }
 

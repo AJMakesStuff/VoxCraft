@@ -1,4 +1,9 @@
-use bevy::{light::NotShadowCaster, prelude::*, render::view::Msaa};
+use bevy::{
+    camera::Hdr,
+    light::NotShadowCaster,
+    prelude::*,
+    render::view::{ColorGrading, Msaa},
+};
 
 use crate::{
     game::{GameSettings, GameState},
@@ -19,7 +24,14 @@ impl Plugin for RenderingPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, setup_scene)
             .add_systems(PostUpdate, follow_sun)
-            .add_systems(Update, (sync_sun_visibility, sync_anti_aliasing));
+            .add_systems(
+                Update,
+                (
+                    sync_sun_visibility,
+                    sync_anti_aliasing,
+                    sync_camera_graphics_settings,
+                ),
+            );
     }
 }
 
@@ -30,6 +42,33 @@ fn sync_anti_aliasing(settings: Res<GameSettings>, mut cameras: Query<&mut Msaa,
     let msaa = Msaa::from_samples(settings.anti_aliasing_samples);
     for mut camera_msaa in &mut cameras {
         *camera_msaa = msaa;
+    }
+}
+
+fn sync_camera_graphics_settings(
+    mut commands: Commands,
+    settings: Res<GameSettings>,
+    mut cameras: Query<(Entity, &mut Projection, &mut ColorGrading, Has<Hdr>), With<Player>>,
+) {
+    if !settings.is_changed() {
+        return;
+    }
+    for (entity, mut projection, mut grading, has_hdr) in &mut cameras {
+        if let Projection::Perspective(perspective) = &mut *projection {
+            perspective.fov = settings.field_of_view_degrees.to_radians();
+        }
+        grading.global.exposure = settings.brightness.log2();
+        for section in grading.all_sections_mut() {
+            section.contrast = settings.contrast;
+            section.gamma = settings.gamma;
+        }
+        if settings.hdr_enabled != has_hdr {
+            if settings.hdr_enabled {
+                commands.entity(entity).insert(Hdr);
+            } else {
+                commands.entity(entity).remove::<Hdr>();
+            }
+        }
     }
 }
 

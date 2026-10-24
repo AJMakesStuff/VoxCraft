@@ -1,7 +1,7 @@
 use bevy::{
     input::mouse::MouseMotion,
     prelude::*,
-    render::view::Msaa,
+    render::view::{ColorGrading, Msaa},
     window::{CursorGrabMode, CursorOptions},
 };
 
@@ -10,7 +10,7 @@ use crate::{
     world::{WorldData, terrain_height},
 };
 
-const EYE_HEIGHT: f32 = 1.62;
+const EYE_HEIGHT: f32 = 1.7;
 const PLAYER_RADIUS: f32 = 0.30;
 const PLAYER_HEADROOM: f32 = 0.18;
 const FLY_TAP_WINDOW_SECS: f32 = 0.35;
@@ -93,6 +93,11 @@ fn spawn_player(mut commands: Commands, settings: Res<crate::game::GameSettings>
     let ground = terrain_height(settings.seed, 0, 0) as f32;
     commands.spawn((
         Camera3d::default(),
+        Projection::Perspective(PerspectiveProjection {
+            fov: settings.field_of_view_degrees.to_radians(),
+            ..default()
+        }),
+        ColorGrading::default(),
         Msaa::from_samples(settings.anti_aliasing_samples),
         Transform::from_xyz(0.0, ground + 1.0 + EYE_HEIGHT, 0.0),
         Player,
@@ -185,8 +190,12 @@ fn game_shortcuts(
             GameState::Options => next_state.set(options_return.0),
             GameState::MainMenu => {}
         }
-    } else if keys.just_pressed(KeyCode::KeyE) && *state.get() == GameState::Playing {
-        next_state.set(GameState::Inventory);
+    } else if keys.just_pressed(KeyCode::KeyE) {
+        match *state.get() {
+            GameState::Playing => next_state.set(GameState::Inventory),
+            GameState::Inventory => next_state.set(GameState::Playing),
+            _ => {}
+        }
     }
 }
 

@@ -5,16 +5,24 @@ use bevy::{
     image::ImageSampler,
     picking::Pickable,
     picking::hover::Hovered,
+    picking::pointer::PointerButton,
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
     ui::Pressed,
-    ui_widgets::{Activate, Button},
-    window::{MonitorSelection, PresentMode, PrimaryWindow, WindowMode},
+    ui_widgets::{
+        Activate, Button, ScrollArea, Slider, SliderPrecision, SliderRange, SliderStep,
+        SliderThumb, SliderValue, TrackClick, ValueChange,
+    },
+    window::{
+        Monitor, MonitorSelection, PresentMode, PrimaryMonitor, PrimaryWindow, VideoMode,
+        VideoModeSelection, WindowMode, WindowPosition,
+    },
 };
 
 use crate::{
     game::{
-        GameSettings, GameState, OptionsReturn, SaveFile, SaveStatus, load_from_disk, save_to_disk,
+        DISPLAY_RESOLUTIONS, DisplayMode, GameSettings, GameState, OptionsReturn, SaveFile,
+        SaveStatus, load_from_disk, save_mouse_sensitivity, save_to_disk,
     },
     interaction::{HOTBAR_SLOTS, Hotbar, Selection},
     player::{PendingPlayerRestore, Player, PlayerVelocity},
@@ -45,15 +53,18 @@ struct HotbarSelectionPopup;
 struct InventoryHoverTooltip;
 
 #[derive(Component)]
+struct InventoryDragPreview;
+
+#[derive(Component)]
 struct DebugText;
 
 #[derive(Component)]
 struct SensitivityReadout;
 
-#[derive(Component)]
+#[derive(Component, Default)]
 struct RenderDistanceReadout;
 
-#[derive(Component)]
+#[derive(Component, Default)]
 struct AntiAliasingReadout;
 
 #[derive(Component)]
@@ -68,11 +79,40 @@ struct HotbarIcon(usize);
 #[derive(Component)]
 struct InventoryBlockPicker(Block);
 
-#[derive(Component)]
-struct FullscreenToggleLabel;
+#[derive(Resource, Default)]
+struct DraggedBlock(Option<Block>);
 
 #[derive(Component)]
 struct VsyncToggleLabel;
+
+#[derive(Component)]
+struct AdaptiveSyncToggleLabel;
+
+#[derive(Component)]
+struct HdrToggleLabel;
+
+#[derive(Component, Default)]
+struct DisplayModeReadout;
+
+#[derive(Component, Default)]
+struct ResolutionReadout;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GraphicsSliderKind {
+    FieldOfView,
+    Brightness,
+    Contrast,
+    Gamma,
+}
+
+#[derive(Component)]
+struct GraphicsSlider(GraphicsSliderKind);
+
+#[derive(Component)]
+struct GraphicsSliderReadout(GraphicsSliderKind);
+
+#[derive(Component)]
+struct CalibrationSwatch(f32);
 
 #[derive(Component)]
 struct SaveStatusLabel;
@@ -95,12 +135,14 @@ enum UiAction {
     SensitivityStep(i8),
     RenderDistanceStep(i8),
     AntiAliasingStep(i8),
+    DisplayModeStep(i8),
+    ResolutionStep(i8),
     ToggleVsync,
-    ToggleFullscreen,
+    ToggleAdaptiveSync,
+    ToggleHdr,
     SaveGame,
     LoadGame,
     SelectHotbar(usize),
-    PickBlock(Block),
 }
 
 #[derive(Resource, Default)]
@@ -120,6 +162,7 @@ pub struct UiPlugin;
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DebugEnabled>()
+            .init_resource::<DraggedBlock>()
             .init_resource::<SaveStatus>()
             .add_systems(Startup, setup_ui)
             .add_systems(
@@ -131,11 +174,17 @@ impl Plugin for UiPlugin {
                     update_hotbar_icons,
                     update_hotbar_selection_popup,
                     update_inventory_hover_tooltip,
+                    update_inventory_drag_preview,
                     update_sensitivity_readout,
                     update_render_distance_readout,
                     update_anti_aliasing_readout,
                     update_vsync_toggle_label,
-                    update_fullscreen_toggle_label,
+                    update_adaptive_sync_toggle_label,
+                    update_hdr_toggle_label,
+                    update_display_mode_readout,
+                    update_resolution_readout,
+                    update_graphics_slider_readouts,
+                    update_calibration_pattern,
                     update_save_status,
                     update_inventory_hint,
                     update_debug_text,
@@ -145,13 +194,13 @@ impl Plugin for UiPlugin {
     }
 }
 
-fn setup_ui(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
+fn setup_ui(mut commands: Commands, mut images: ResMut<Assets<Image>>, hotbar: Res<Hotbar>) {
     let icons = create_block_icons(&mut images);
     commands.insert_resource(icons.clone());
     setup_main_menu(&mut commands);
     setup_options_menu(&mut commands);
     setup_pause_menu(&mut commands);
-    setup_inventory(&mut commands, &icons);
+    setup_inventory(&mut commands, &icons, &hotbar);
     setup_hotbar(&mut commands, &icons);
     setup_crosshair(&mut commands);
     setup_debug_text(&mut commands);
@@ -163,6 +212,7 @@ fn create_screen(
     backdrop: Color,
     panel_width: f32,
 ) -> Entity {
+    let scrollable = state == GameState::Options;
     let root = commands
         .spawn((
             Node {
@@ -186,24 +236,35 @@ fn create_screen(
 
     let mut panel = None;
     commands.entity(root).with_children(|screen| {
-        panel = Some(
-            screen
-                .spawn((
-                    Node {
-                        width: Val::Px(panel_width),
-                        max_width: Val::Percent(92.0),
-                        flex_direction: FlexDirection::Column,
-                        align_items: AlignItems::Center,
-                        row_gap: Val::Px(12.0),
-                        padding: UiRect::all(Val::Px(28.0)),
-                        border: UiRect::all(Val::Px(1.0)),
-                        ..default()
-                    },
-                    BackgroundColor(PANEL_COLOR),
-                    BorderColor::all(Color::srgba(0.69, 0.78, 0.73, 0.24)),
-                ))
-                .id(),
-        );
+        let mut menu_panel = screen.spawn((
+            Node {
+                width: Val::Px(panel_width),
+                max_width: Val::Percent(92.0),
+                max_height: if scrollable {
+                    Val::Percent(90.0)
+                } else {
+                    Val::Auto
+                },
+                overflow: if scrollable {
+                    Overflow::scroll_y()
+                } else {
+                    Overflow::visible()
+                },
+                scrollbar_width: if scrollable { 10.0 } else { 0.0 },
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                row_gap: Val::Px(12.0),
+                padding: UiRect::all(Val::Px(28.0)),
+                border: UiRect::all(Val::Px(1.0)),
+                ..default()
+            },
+            BackgroundColor(PANEL_COLOR),
+            BorderColor::all(Color::srgba(0.69, 0.78, 0.73, 0.24)),
+        ));
+        if scrollable {
+            menu_panel.insert(ScrollArea);
+        }
+        panel = Some(menu_panel.id());
     });
     panel.expect("screen panel is created with its root")
 }
@@ -272,7 +333,7 @@ fn setup_options_menu(commands: &mut Commands) {
         commands,
         GameState::Options,
         Color::srgba(0.015, 0.025, 0.032, 0.92),
-        500.0,
+        680.0,
     );
     commands.entity(panel).with_children(|panel| {
         add_label(panel, "OPTIONS", 34.0, TEXT_COLOR);
@@ -331,129 +392,119 @@ fn setup_options_menu(commands: &mut Commands) {
                 );
             });
         add_label(panel, "GRAPHICS", 24.0, TEXT_COLOR);
+        add_label(panel, "DISPLAY", 16.0, MUTED_TEXT_COLOR);
+        add_label(panel, "Display Mode", 14.0, MUTED_TEXT_COLOR);
+        add_graphics_stepper::<DisplayModeReadout>(
+            panel,
+            UiAction::DisplayModeStep(-1),
+            UiAction::DisplayModeStep(1),
+        );
+        add_label(panel, "Resolution", 14.0, MUTED_TEXT_COLOR);
+        add_graphics_stepper::<ResolutionReadout>(
+            panel,
+            UiAction::ResolutionStep(-1),
+            UiAction::ResolutionStep(1),
+        );
+        add_graphics_slider(
+            panel,
+            "Field of View",
+            GraphicsSliderKind::FieldOfView,
+            60.0,
+            120.0,
+            75.0,
+            1.0,
+            0,
+        );
         add_label(panel, "Render Distance", 14.0, MUTED_TEXT_COLOR);
-        panel
-            .spawn((
-                Node {
-                    width: Val::Percent(100.0),
-                    flex_direction: FlexDirection::Row,
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    column_gap: Val::Px(12.0),
-                    ..default()
-                },
-                BackgroundColor(Color::NONE),
-            ))
-            .with_children(|row| {
-                add_button(
-                    row,
-                    "−",
-                    UiAction::RenderDistanceStep(-1),
-                    72.0,
-                    46.0,
-                    None,
-                    None,
-                );
-                row.spawn((
-                    Text::new(""),
-                    TextFont {
-                        font_size: FontSize::Px(17.0),
-                        ..default()
-                    },
-                    TextColor(TEXT_COLOR),
-                    TextLayout::justify(Justify::Center),
-                    Node {
-                        width: Val::Px(230.0),
-                        height: Val::Px(46.0),
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        ..default()
-                    },
-                    RenderDistanceReadout,
-                ));
-                add_button(
-                    row,
-                    "+",
-                    UiAction::RenderDistanceStep(1),
-                    72.0,
-                    46.0,
-                    None,
-                    None,
-                );
-            });
+        add_graphics_stepper::<RenderDistanceReadout>(
+            panel,
+            UiAction::RenderDistanceStep(-1),
+            UiAction::RenderDistanceStep(1),
+        );
         add_label(panel, "Anti-Aliasing", 14.0, MUTED_TEXT_COLOR);
-        panel
-            .spawn((
-                Node {
-                    width: Val::Percent(100.0),
-                    flex_direction: FlexDirection::Row,
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    column_gap: Val::Px(12.0),
-                    ..default()
-                },
-                BackgroundColor(Color::NONE),
-            ))
-            .with_children(|row| {
-                add_button(
-                    row,
-                    "−",
-                    UiAction::AntiAliasingStep(-1),
-                    72.0,
-                    46.0,
-                    None,
-                    None,
-                );
-                row.spawn((
-                    Text::new(""),
-                    TextFont {
-                        font_size: FontSize::Px(17.0),
-                        ..default()
-                    },
-                    TextColor(TEXT_COLOR),
-                    TextLayout::justify(Justify::Center),
-                    Node {
-                        width: Val::Px(230.0),
-                        height: Val::Px(46.0),
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        ..default()
-                    },
-                    AntiAliasingReadout,
-                ));
-                add_button(
-                    row,
-                    "+",
-                    UiAction::AntiAliasingStep(1),
-                    72.0,
-                    46.0,
-                    None,
-                    None,
-                );
-            });
+        add_graphics_stepper::<AntiAliasingReadout>(
+            panel,
+            UiAction::AntiAliasingStep(-1),
+            UiAction::AntiAliasingStep(1),
+        );
+        add_label(panel, "SYNC", 16.0, MUTED_TEXT_COLOR);
         add_button(
             panel,
             "V-Sync: Off",
             UiAction::ToggleVsync,
-            340.0,
-            46.0,
+            420.0,
+            44.0,
             None,
             None,
         );
         add_button(
             panel,
-            "Enter Fullscreen",
-            UiAction::ToggleFullscreen,
-            340.0,
-            50.0,
+            "Adaptive V-Sync: Off",
+            UiAction::ToggleAdaptiveSync,
+            420.0,
+            44.0,
             None,
             None,
+        );
+        add_label(
+            panel,
+            "Adaptive presentation is used where supported. G-Sync / FreeSync is controlled by your display driver.",
+            13.0,
+            MUTED_TEXT_COLOR,
+        );
+        add_label(panel, "COLOR CALIBRATION", 16.0, MUTED_TEXT_COLOR);
+        add_graphics_slider(
+            panel,
+            "Brightness",
+            GraphicsSliderKind::Brightness,
+            0.5,
+            1.5,
+            1.0,
+            0.05,
+            2,
+        );
+        add_graphics_slider(
+            panel,
+            "Contrast",
+            GraphicsSliderKind::Contrast,
+            0.5,
+            1.5,
+            1.0,
+            0.05,
+            2,
+        );
+        add_graphics_slider(
+            panel,
+            "Gamma",
+            GraphicsSliderKind::Gamma,
+            0.5,
+            2.0,
+            1.0,
+            0.05,
+            2,
+        );
+        add_label(panel, "Live calibration pattern", 13.0, MUTED_TEXT_COLOR);
+        add_calibration_pattern(panel);
+        add_button(
+            panel,
+            "HDR Rendering: Off",
+            UiAction::ToggleHdr,
+            420.0,
+            44.0,
+            None,
+            None,
+        );
+        add_label(
+            panel,
+            "HDR rendering uses a higher precision camera buffer. Bevy does not currently output HDR to HDR monitors.",
+            13.0,
+            MUTED_TEXT_COLOR,
         );
         add_button(
             panel,
             "Back",
             UiAction::BackFromOptions,
-            340.0,
+            420.0,
             50.0,
             None,
             None,
@@ -465,6 +516,173 @@ fn setup_options_menu(commands: &mut Commands) {
             MUTED_TEXT_COLOR,
         );
     });
+}
+
+fn add_graphics_stepper<T: Component + Default>(
+    parent: &mut ChildSpawnerCommands<'_>,
+    decrease: UiAction,
+    increase: UiAction,
+) {
+    parent
+        .spawn((
+            Node {
+                width: Val::Percent(100.0),
+                flex_direction: FlexDirection::Row,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                column_gap: Val::Px(10.0),
+                ..default()
+            },
+            BackgroundColor(Color::NONE),
+        ))
+        .with_children(|row| {
+            add_button(row, "−", decrease, 64.0, 42.0, None, None);
+            row.spawn((
+                Text::new(""),
+                TextFont {
+                    font_size: FontSize::Px(16.0),
+                    ..default()
+                },
+                TextColor(TEXT_COLOR),
+                TextLayout::justify(Justify::Center),
+                Node {
+                    width: Val::Px(270.0),
+                    height: Val::Px(42.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                T::default(),
+            ));
+            add_button(row, "+", increase, 64.0, 42.0, None, None);
+        });
+}
+
+fn add_graphics_slider(
+    parent: &mut ChildSpawnerCommands<'_>,
+    label: &str,
+    kind: GraphicsSliderKind,
+    min: f32,
+    max: f32,
+    value: f32,
+    step: f32,
+    precision: i32,
+) {
+    parent
+        .spawn((
+            Node {
+                width: Val::Percent(100.0),
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: Val::Px(12.0),
+                ..default()
+            },
+            BackgroundColor(Color::NONE),
+        ))
+        .with_children(|row| {
+            row.spawn((
+                Text::new(label),
+                TextFont {
+                    font_size: FontSize::Px(14.0),
+                    ..default()
+                },
+                TextColor(MUTED_TEXT_COLOR),
+                TextLayout::no_wrap(),
+                Node {
+                    width: Val::Px(128.0),
+                    ..default()
+                },
+            ));
+            let mut slider = row.spawn((
+                Slider {
+                    track_click: TrackClick::Snap,
+                    ..default()
+                },
+                SliderValue(value),
+                SliderRange::new(min, max),
+                SliderStep(step),
+                SliderPrecision(precision),
+                GraphicsSlider(kind),
+                Hovered::default(),
+                Node {
+                    width: Val::Px(250.0),
+                    height: Val::Px(26.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+            ));
+            slider.observe(on_graphics_slider_change);
+            slider.with_children(|slider| {
+                slider.spawn((
+                    Node {
+                        height: Val::Px(6.0),
+                        width: Val::Percent(100.0),
+                        border_radius: BorderRadius::MAX,
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(0.045, 0.06, 0.065)),
+                ));
+                slider.spawn((
+                    SliderThumb,
+                    Node {
+                        width: Val::Px(14.0),
+                        height: Val::Px(20.0),
+                        position_type: PositionType::Absolute,
+                        left: Val::Percent(0.0),
+                        top: Val::Px(3.0),
+                        border_radius: BorderRadius::all(Val::Px(3.0)),
+                        ..default()
+                    },
+                    BackgroundColor(HOTBAR_SELECTED_COLOR),
+                ));
+            });
+            row.spawn((
+                Text::new(""),
+                TextFont {
+                    font_size: FontSize::Px(14.0),
+                    ..default()
+                },
+                TextColor(TEXT_COLOR),
+                TextLayout::no_wrap().with_justify(Justify::Right),
+                Node {
+                    width: Val::Px(56.0),
+                    justify_content: JustifyContent::FlexEnd,
+                    ..default()
+                },
+                GraphicsSliderReadout(kind),
+            ));
+        });
+}
+
+fn add_calibration_pattern(parent: &mut ChildSpawnerCommands<'_>) {
+    parent
+        .spawn((
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Px(38.0),
+                flex_direction: FlexDirection::Row,
+                column_gap: Val::Px(2.0),
+                ..default()
+            },
+            BackgroundColor(Color::NONE),
+        ))
+        .with_children(|row| {
+            for shade in [
+                0.0, 0.01, 0.025, 0.05, 0.10, 0.18, 0.30, 0.45, 0.60, 0.72, 0.84, 0.93, 0.98, 1.0,
+            ] {
+                row.spawn((
+                    Node {
+                        flex_grow: 1.0,
+                        height: Val::Percent(100.0),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(shade, shade, shade)),
+                    BorderColor::all(Color::srgba(0.7, 0.75, 0.75, 0.16)),
+                    CalibrationSwatch(shade),
+                ));
+            }
+        });
 }
 
 fn setup_pause_menu(commands: &mut Commands) {
@@ -534,7 +752,7 @@ fn setup_pause_menu(commands: &mut Commands) {
     });
 }
 
-fn setup_inventory(commands: &mut Commands, icons: &BlockIconAssets) {
+fn setup_inventory(commands: &mut Commands, icons: &BlockIconAssets, hotbar: &Hotbar) {
     let panel = create_screen(
         commands,
         GameState::Inventory,
@@ -578,6 +796,26 @@ fn setup_inventory(commands: &mut Commands, icons: &BlockIconAssets) {
                     add_block_picker_button(row, block, icons.get(block));
                 }
             });
+        add_label(panel, "HOTBAR", 16.0, MUTED_TEXT_COLOR);
+        panel
+            .spawn((
+                Node {
+                    width: Val::Percent(100.0),
+                    flex_direction: FlexDirection::Row,
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(4.0),
+                    padding: UiRect::all(Val::Px(5.0)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.025, 0.035, 0.04, 0.78)),
+                BorderColor::all(Color::srgba(0.8, 0.84, 0.77, 0.28)),
+            ))
+            .with_children(|row| {
+                for (slot, block) in hotbar.slots.iter().copied().enumerate() {
+                    add_hotbar_button(row, slot, icons.get(block));
+                }
+            });
         add_button(
             panel,
             "Back to Game",
@@ -589,7 +827,7 @@ fn setup_inventory(commands: &mut Commands, icons: &BlockIconAssets) {
         );
         add_label(
             panel,
-            "Choose a block for the selected hotbar slot. Press Escape to close.",
+            "Click or drag a block, then click or drag a hotbar slot. E or Escape closes the picker.",
             14.0,
             MUTED_TEXT_COLOR,
         );
@@ -616,6 +854,26 @@ fn setup_inventory(commands: &mut Commands, icons: &BlockIconAssets) {
         Pickable::IGNORE,
         Visibility::Hidden,
         GlobalZIndex(30),
+    ));
+
+    commands.spawn((
+        ImageNode::new(icons.get(Block::Grass)),
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(0.0),
+            top: Val::Px(0.0),
+            width: Val::Px(56.0),
+            height: Val::Px(56.0),
+            padding: UiRect::all(Val::Px(3.0)),
+            border: UiRect::all(Val::Px(1.0)),
+            ..default()
+        },
+        BackgroundColor(PANEL_COLOR),
+        BorderColor::all(Color::srgba(0.85, 0.92, 0.86, 0.8)),
+        InventoryDragPreview,
+        Pickable::IGNORE,
+        Visibility::Hidden,
+        GlobalZIndex(40),
     ));
 }
 
@@ -810,11 +1068,14 @@ fn add_button(
     if let Some(slot) = hotbar_slot {
         button.insert(HotbarSlot(slot));
     }
-    if matches!(action, UiAction::ToggleFullscreen) {
-        button.insert(FullscreenToggleLabel);
-    }
     if matches!(action, UiAction::ToggleVsync) {
         button.insert(VsyncToggleLabel);
+    }
+    if matches!(action, UiAction::ToggleAdaptiveSync) {
+        button.insert(AdaptiveSyncToggleLabel);
+    }
+    if matches!(action, UiAction::ToggleHdr) {
+        button.insert(HdrToggleLabel);
     }
     button.observe(on_menu_action);
 }
@@ -846,9 +1107,11 @@ fn add_hotbar_button(parent: &mut ChildSpawnerCommands<'_>, slot: usize, icon: H
                 ..default()
             },
             HotbarIcon(slot),
+            Pickable::IGNORE,
         ));
     });
     button.observe(on_menu_action);
+    button.observe(on_inventory_hotbar_drop);
 }
 
 fn add_block_picker_button(
@@ -861,7 +1124,6 @@ fn add_block_picker_button(
         Button,
         Hovered::default(),
         InventoryBlockPicker(block),
-        MenuButtonAction(UiAction::PickBlock(block)),
         ButtonTint(tint),
         Node {
             width: Val::Px(96.0),
@@ -885,9 +1147,95 @@ fn add_block_picker_button(
                 height: Val::Px(76.0),
                 ..default()
             },
+            Pickable::IGNORE,
         ));
     });
-    button.observe(on_menu_action);
+    button.observe(pick_up_inventory_block);
+    button.observe(begin_inventory_block_drag);
+    button.observe(end_inventory_block_drag);
+}
+
+fn apply_present_mode(
+    settings: &GameSettings,
+    windows: &mut Query<&mut Window, With<PrimaryWindow>>,
+) {
+    let Ok(mut window) = windows.single_mut() else {
+        return;
+    };
+    window.present_mode = if !settings.vsync_enabled {
+        PresentMode::AutoNoVsync
+    } else if settings.adaptive_sync_enabled {
+        // AutoVsync tries the platform's adaptive FIFO mode before standard FIFO.
+        PresentMode::AutoVsync
+    } else {
+        PresentMode::Fifo
+    };
+}
+
+fn apply_display_settings(
+    settings: &GameSettings,
+    windows: &mut Query<&mut Window, With<PrimaryWindow>>,
+    monitors: &Query<&Monitor, With<PrimaryMonitor>>,
+) {
+    let Ok(mut window) = windows.single_mut() else {
+        return;
+    };
+    let monitor = monitors.single().ok();
+    let fallback_size = window.resolution.physical_size();
+    let (width, height) = selected_resolution(settings.resolution_index, monitor, fallback_size);
+    window.present_mode = if !settings.vsync_enabled {
+        PresentMode::AutoNoVsync
+    } else if settings.adaptive_sync_enabled {
+        PresentMode::AutoVsync
+    } else {
+        PresentMode::Fifo
+    };
+
+    match settings.display_mode {
+        DisplayMode::Windowed => {
+            window.mode = WindowMode::Windowed;
+            window.set_maximized(false);
+            window.resolution.set_physical_resolution(width, height);
+            window.position = WindowPosition::Centered(MonitorSelection::Current);
+        }
+        DisplayMode::Borderless => {
+            window.set_maximized(false);
+            window.mode = WindowMode::BorderlessFullscreen(MonitorSelection::Current);
+        }
+        DisplayMode::Fullscreen => {
+            window.set_maximized(false);
+            let video_mode = selected_video_mode(settings.resolution_index, monitor)
+                .map(VideoModeSelection::Specific)
+                .unwrap_or(VideoModeSelection::Current);
+            window.mode = WindowMode::Fullscreen(MonitorSelection::Current, video_mode);
+        }
+    }
+}
+
+fn selected_resolution(index: usize, monitor: Option<&Monitor>, fallback: UVec2) -> (u32, u32) {
+    if index == 0 {
+        return monitor
+            .map(|monitor| (monitor.physical_width, monitor.physical_height))
+            .filter(|(width, height)| *width > 0 && *height > 0)
+            .unwrap_or((fallback.x.max(800), fallback.y.max(600)));
+    }
+    DISPLAY_RESOLUTIONS
+        .get(index - 1)
+        .copied()
+        .unwrap_or((fallback.x, fallback.y))
+}
+
+fn selected_video_mode(index: usize, monitor: Option<&Monitor>) -> Option<VideoMode> {
+    if index == 0 {
+        return None;
+    }
+    let (width, height) = *DISPLAY_RESOLUTIONS.get(index - 1)?;
+    monitor?
+        .video_modes
+        .iter()
+        .copied()
+        .filter(|mode| mode.physical_size == UVec2::new(width, height))
+        .max_by_key(|mode| (mode.refresh_rate_millihertz, mode.bit_depth))
 }
 
 fn on_menu_action(
@@ -897,11 +1245,14 @@ fn on_menu_action(
     mut options_return: ResMut<OptionsReturn>,
     mut settings: ResMut<GameSettings>,
     mut hotbar: ResMut<Hotbar>,
+    state: Res<State<GameState>>,
+    mut dragged: ResMut<DraggedBlock>,
     mut world: ResMut<WorldData>,
     player: Query<&Transform, With<Player>>,
     mut pending_player_restore: ResMut<PendingPlayerRestore>,
     mut save_status: ResMut<SaveStatus>,
     mut primary_window: Query<&mut Window, With<PrimaryWindow>>,
+    primary_monitor: Query<&Monitor, With<PrimaryMonitor>>,
     mut app_exit: MessageWriter<AppExit>,
 ) {
     let Ok(MenuButtonAction(action)) = actions.get(event.entity) else {
@@ -928,31 +1279,37 @@ fn on_menu_action(
         }
         UiAction::SensitivityStep(direction) => {
             settings.adjust_mouse_sensitivity(direction as f32 * 0.0002);
+            if let Err(error) = save_mouse_sensitivity(settings.mouse_sensitivity) {
+                eprintln!("Could not persist mouse sensitivity: {error}");
+            }
         }
         UiAction::RenderDistanceStep(direction) => {
             settings.adjust_render_distance(direction as i32);
         }
         UiAction::AntiAliasingStep(direction) => settings.step_anti_aliasing(direction),
+        UiAction::DisplayModeStep(direction) => {
+            settings.step_display_mode(direction);
+            apply_display_settings(&settings, &mut primary_window, &primary_monitor);
+        }
+        UiAction::ResolutionStep(direction) => {
+            settings.step_resolution(direction);
+            apply_display_settings(&settings, &mut primary_window, &primary_monitor);
+        }
         UiAction::ToggleVsync => {
             settings.vsync_enabled = !settings.vsync_enabled;
-            if let Ok(mut window) = primary_window.single_mut() {
-                window.present_mode = if settings.vsync_enabled {
-                    PresentMode::AutoVsync
-                } else {
-                    PresentMode::AutoNoVsync
-                };
+            if !settings.vsync_enabled {
+                settings.adaptive_sync_enabled = false;
             }
+            apply_present_mode(&settings, &mut primary_window);
         }
-        UiAction::ToggleFullscreen => {
-            if let Ok(mut window) = primary_window.single_mut() {
-                if matches!(window.mode, WindowMode::Windowed) {
-                    window.mode = WindowMode::BorderlessFullscreen(MonitorSelection::Current);
-                } else {
-                    window.mode = WindowMode::Windowed;
-                    window.set_maximized(true);
-                }
+        UiAction::ToggleAdaptiveSync => {
+            settings.adaptive_sync_enabled = !settings.adaptive_sync_enabled;
+            if settings.adaptive_sync_enabled {
+                settings.vsync_enabled = true;
             }
+            apply_present_mode(&settings, &mut primary_window);
         }
+        UiAction::ToggleHdr => settings.hdr_enabled = !settings.hdr_enabled,
         UiAction::SaveGame => {
             let Ok(player) = player.single() else {
                 save_status.0 = "Could not find the player to save.".to_owned();
@@ -984,12 +1341,62 @@ fn on_menu_action(
             }
             Err(error) => save_status.0 = error,
         },
-        UiAction::SelectHotbar(slot) => hotbar.select_slot(slot),
-        UiAction::PickBlock(block) => {
-            hotbar.replace_selected(block);
-            next_state.set(GameState::Playing);
+        UiAction::SelectHotbar(slot) => {
+            if *state.get() == GameState::Inventory
+                && let Some(block) = dragged.0.take()
+            {
+                hotbar.replace_slot(slot, block);
+            }
+            hotbar.select_slot(slot);
         }
     }
+}
+
+fn pick_up_inventory_block(
+    event: On<Activate>,
+    pickers: Query<&InventoryBlockPicker>,
+    state: Res<State<GameState>>,
+    mut dragged: ResMut<DraggedBlock>,
+) {
+    if *state.get() != GameState::Inventory {
+        return;
+    }
+    if let Ok(InventoryBlockPicker(block)) = pickers.get(event.entity) {
+        dragged.0 = Some(*block);
+    }
+}
+
+fn begin_inventory_block_drag(
+    event: On<PointerDragStart>,
+    pickers: Query<&InventoryBlockPicker>,
+    mut dragged: ResMut<DraggedBlock>,
+) {
+    if event.button == PointerButton::Primary {
+        dragged.0 = pickers.get(event.entity).ok().map(|picker| picker.0);
+    }
+}
+
+fn end_inventory_block_drag(_event: On<PointerDragEnd>, mut dragged: ResMut<DraggedBlock>) {
+    dragged.0 = None;
+}
+
+fn on_inventory_hotbar_drop(
+    mut event: On<PointerDragDrop>,
+    state: Res<State<GameState>>,
+    pickers: Query<&InventoryBlockPicker>,
+    hotbar_slots: Query<&HotbarSlot>,
+    mut hotbar: ResMut<Hotbar>,
+) {
+    if *state.get() != GameState::Inventory || event.button != PointerButton::Primary {
+        return;
+    }
+    let (Ok(InventoryBlockPicker(block)), Ok(HotbarSlot(slot))) =
+        (pickers.get(event.dropped), hotbar_slots.get(event.entity))
+    else {
+        return;
+    };
+    hotbar.replace_slot(*slot, *block);
+    event.propagate(false);
 }
 
 fn toggle_debug(
@@ -1122,6 +1529,7 @@ fn update_hotbar_selection_popup(
 
 fn update_inventory_hover_tooltip(
     state: Res<State<GameState>>,
+    dragged: Res<DraggedBlock>,
     windows: Query<&Window>,
     pickers: Query<(&Hovered, &InventoryBlockPicker)>,
     mut tooltip: Query<(&mut Text, &mut Node, &mut Visibility), With<InventoryHoverTooltip>>,
@@ -1129,7 +1537,7 @@ fn update_inventory_hover_tooltip(
     let Ok((mut text, mut node, mut visibility)) = tooltip.single_mut() else {
         return;
     };
-    if *state.get() != GameState::Inventory {
+    if *state.get() != GameState::Inventory || dragged.0.is_some() {
         *visibility = Visibility::Hidden;
         return;
     }
@@ -1169,6 +1577,43 @@ fn update_inventory_hover_tooltip(
     .clamp(0.0, (window.height() - tooltip_height).max(0.0));
     node.left = Val::Px(left);
     node.top = Val::Px(top);
+    *visibility = Visibility::Visible;
+}
+
+fn update_inventory_drag_preview(
+    state: Res<State<GameState>>,
+    mut dragged: ResMut<DraggedBlock>,
+    icons: Res<BlockIconAssets>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut preview: Query<(&mut ImageNode, &mut Node, &mut Visibility), With<InventoryDragPreview>>,
+    mut last_block: Local<Option<Block>>,
+) {
+    let Ok((mut image, mut node, mut visibility)) = preview.single_mut() else {
+        return;
+    };
+    if *state.get() != GameState::Inventory {
+        dragged.0 = None;
+    }
+    let Some(block) = dragged.0 else {
+        *visibility = Visibility::Hidden;
+        *last_block = None;
+        return;
+    };
+    let Ok(window) = windows.single() else {
+        *visibility = Visibility::Hidden;
+        return;
+    };
+    let Some(cursor) = window.cursor_position() else {
+        *visibility = Visibility::Hidden;
+        return;
+    };
+
+    if *last_block != Some(block) {
+        image.image = icons.get(block);
+        *last_block = Some(block);
+    }
+    node.left = Val::Px(cursor.x + 14.0);
+    node.top = Val::Px(cursor.y + 14.0);
     *visibility = Visibility::Visible;
 }
 
@@ -1216,9 +1661,6 @@ fn update_vsync_toggle_label(
     settings: Res<GameSettings>,
     mut labels: Query<&mut Text, With<VsyncToggleLabel>>,
 ) {
-    if !settings.is_changed() {
-        return;
-    }
     let label = if settings.vsync_enabled {
         "V-Sync: On"
     } else {
@@ -1231,22 +1673,155 @@ fn update_vsync_toggle_label(
     }
 }
 
-fn update_fullscreen_toggle_label(
-    windows: Query<&Window, With<PrimaryWindow>>,
-    mut labels: Query<&mut Text, With<FullscreenToggleLabel>>,
+fn update_adaptive_sync_toggle_label(
+    settings: Res<GameSettings>,
+    mut labels: Query<&mut Text, With<AdaptiveSyncToggleLabel>>,
 ) {
-    let Ok(window) = windows.single() else {
-        return;
-    };
-    let label = if matches!(window.mode, WindowMode::Windowed) {
-        "Enter Fullscreen"
+    let label = if settings.adaptive_sync_enabled {
+        "Adaptive V-Sync: On"
     } else {
-        "Exit Fullscreen"
+        "Adaptive V-Sync: Off"
     };
     for mut text in &mut labels {
         if text.0 != label {
             text.0 = label.to_owned();
         }
+    }
+}
+
+fn update_hdr_toggle_label(
+    settings: Res<GameSettings>,
+    mut labels: Query<&mut Text, With<HdrToggleLabel>>,
+) {
+    let label = if settings.hdr_enabled {
+        "HDR Rendering: On"
+    } else {
+        "HDR Rendering: Off"
+    };
+    for mut text in &mut labels {
+        if text.0 != label {
+            text.0 = label.to_owned();
+        }
+    }
+}
+
+fn update_display_mode_readout(
+    settings: Res<GameSettings>,
+    mut readouts: Query<&mut Text, With<DisplayModeReadout>>,
+) {
+    let label = match settings.display_mode {
+        DisplayMode::Windowed => "Windowed",
+        DisplayMode::Borderless => "Borderless Windowed",
+        DisplayMode::Fullscreen => "Exclusive Fullscreen",
+    };
+    for mut text in &mut readouts {
+        if text.0 != label {
+            text.0 = label.to_owned();
+        }
+    }
+}
+
+fn update_resolution_readout(
+    settings: Res<GameSettings>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    monitors: Query<&Monitor, With<PrimaryMonitor>>,
+    mut readouts: Query<&mut Text, With<ResolutionReadout>>,
+) {
+    let monitor = monitors.single().ok();
+    let fallback = windows
+        .single()
+        .map(|window| window.resolution.physical_size())
+        .unwrap_or(UVec2::new(1280, 720));
+    let (width, height) = selected_resolution(settings.resolution_index, monitor, fallback);
+    let label = if settings.resolution_index == 0 {
+        format!("Native ({width} × {height})")
+    } else {
+        format!("{width} × {height}")
+    };
+    for mut text in &mut readouts {
+        if text.0 != label {
+            text.0.clone_from(&label);
+        }
+    }
+}
+
+fn on_graphics_slider_change(
+    event: On<ValueChange<f32>>,
+    sliders: Query<&GraphicsSlider>,
+    mut settings: ResMut<GameSettings>,
+    mut commands: Commands,
+) {
+    let Ok(GraphicsSlider(kind)) = sliders.get(event.source) else {
+        return;
+    };
+    let value = match kind {
+        GraphicsSliderKind::FieldOfView => {
+            settings.field_of_view_degrees = event.value.clamp(60.0, 120.0);
+            settings.field_of_view_degrees
+        }
+        GraphicsSliderKind::Brightness => {
+            settings.brightness = event.value.clamp(0.5, 1.5);
+            settings.brightness
+        }
+        GraphicsSliderKind::Contrast => {
+            settings.contrast = event.value.clamp(0.5, 1.5);
+            settings.contrast
+        }
+        GraphicsSliderKind::Gamma => {
+            settings.gamma = event.value.clamp(0.5, 2.0);
+            settings.gamma
+        }
+    };
+    commands.entity(event.source).insert(SliderValue(value));
+}
+
+fn update_graphics_slider_readouts(
+    settings: Res<GameSettings>,
+    mut sliders: Query<(Entity, &GraphicsSlider, &SliderValue)>,
+    mut labels: Query<(&GraphicsSliderReadout, &mut Text)>,
+    mut commands: Commands,
+) {
+    for (entity, GraphicsSlider(kind), value) in &mut sliders {
+        let desired = graphics_slider_value(&settings, *kind);
+        if (value.0 - desired).abs() > 0.001 {
+            commands.entity(entity).insert(SliderValue(desired));
+        }
+    }
+    for (GraphicsSliderReadout(kind), mut text) in &mut labels {
+        let value = graphics_slider_value(&settings, *kind);
+        let label = if *kind == GraphicsSliderKind::FieldOfView {
+            format!("{value:.0}°")
+        } else {
+            format!("{value:.2}")
+        };
+        if text.0 != label {
+            text.0 = label;
+        }
+    }
+}
+
+fn update_calibration_pattern(
+    settings: Res<GameSettings>,
+    mut swatches: Query<(&CalibrationSwatch, &mut BackgroundColor)>,
+) {
+    if !settings.is_changed() {
+        return;
+    }
+
+    for (CalibrationSwatch(sample), mut background) in &mut swatches {
+        let exposed = sample * settings.brightness;
+        let contrasted = ((exposed - 0.5) * settings.contrast + 0.5).clamp(0.0, 1.0);
+        let calibrated = contrasted.powf(settings.gamma.recip()).clamp(0.0, 1.0);
+        background.0 = Color::srgb(calibrated, calibrated, calibrated);
+    }
+}
+
+fn graphics_slider_value(settings: &GameSettings, kind: GraphicsSliderKind) -> f32 {
+    match kind {
+        GraphicsSliderKind::FieldOfView => settings.field_of_view_degrees,
+        GraphicsSliderKind::Brightness => settings.brightness,
+        GraphicsSliderKind::Contrast => settings.contrast,
+        GraphicsSliderKind::Gamma => settings.gamma,
     }
 }
 

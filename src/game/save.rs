@@ -37,6 +37,11 @@ pub struct SavedEdit {
     pub block: u8,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct UserSettingsFile {
+    mouse_sensitivity: f32,
+}
+
 impl SaveFile {
     pub fn capture(world: &WorldData, player: &Transform, hotbar: &Hotbar) -> Self {
         let mut edits: Vec<_> = world
@@ -133,6 +138,32 @@ pub fn load_from_disk() -> Result<SaveFile, String> {
     Ok(save)
 }
 
+pub fn load_mouse_sensitivity() -> Option<f32> {
+    let json = fs::read_to_string(settings_file_path()).ok()?;
+    let settings: UserSettingsFile = serde_json::from_str(&json).ok()?;
+    settings
+        .mouse_sensitivity
+        .is_finite()
+        .then(|| settings.mouse_sensitivity.clamp(0.0001, 0.02))
+}
+
+pub fn save_mouse_sensitivity(mouse_sensitivity: f32) -> Result<(), String> {
+    if !mouse_sensitivity.is_finite() {
+        return Err("Mouse sensitivity must be a finite number.".to_owned());
+    }
+    let path = settings_file_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("Could not create settings folder: {error}"))?;
+    }
+    let settings = UserSettingsFile {
+        mouse_sensitivity: mouse_sensitivity.clamp(0.0001, 0.02),
+    };
+    let json = serde_json::to_vec_pretty(&settings)
+        .map_err(|error| format!("Could not encode settings: {error}"))?;
+    fs::write(path, json).map_err(|error| format!("Could not write settings: {error}"))
+}
+
 fn save_file_path() -> PathBuf {
     #[cfg(windows)]
     if let Some(root) = env::var_os("APPDATA") {
@@ -162,4 +193,34 @@ fn save_file_path() -> PathBuf {
     env::current_dir()
         .unwrap_or_default()
         .join("voxcraft_save.json")
+}
+
+fn settings_file_path() -> PathBuf {
+    #[cfg(windows)]
+    if let Some(root) = env::var_os("APPDATA") {
+        return PathBuf::from(root).join("VoxCraft").join("settings.json");
+    }
+
+    #[cfg(target_os = "macos")]
+    if let Some(home) = env::var_os("HOME") {
+        return PathBuf::from(home)
+            .join("Library")
+            .join("Application Support")
+            .join("VoxCraft")
+            .join("settings.json");
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    if let Some(root) = env::var_os("XDG_CONFIG_HOME") {
+        return PathBuf::from(root).join("voxcraft").join("settings.json");
+    } else if let Some(home) = env::var_os("HOME") {
+        return PathBuf::from(home)
+            .join(".config")
+            .join("voxcraft")
+            .join("settings.json");
+    }
+
+    env::current_dir()
+        .unwrap_or_default()
+        .join("voxcraft_settings.json")
 }
