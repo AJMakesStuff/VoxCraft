@@ -1,7 +1,7 @@
-use bevy::{light::NotShadowCaster, prelude::*};
+use bevy::{light::NotShadowCaster, prelude::*, render::view::Msaa};
 
 use crate::{
-    game::GameState,
+    game::{GameSettings, GameState},
     player::Player,
     world::{WorldMaterial, block_texture_atlas},
 };
@@ -19,7 +19,17 @@ impl Plugin for RenderingPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, setup_scene)
             .add_systems(PostUpdate, follow_sun)
-            .add_systems(Update, sync_sun_visibility);
+            .add_systems(Update, (sync_sun_visibility, sync_anti_aliasing));
+    }
+}
+
+fn sync_anti_aliasing(settings: Res<GameSettings>, mut cameras: Query<&mut Msaa, With<Player>>) {
+    if !settings.is_changed() {
+        return;
+    }
+    let msaa = Msaa::from_samples(settings.anti_aliasing_samples);
+    for mut camera_msaa in &mut cameras {
+        *camera_msaa = msaa;
     }
 }
 

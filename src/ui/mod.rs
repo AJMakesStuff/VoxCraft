@@ -9,7 +9,7 @@ use bevy::{
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
     ui::Pressed,
     ui_widgets::{Activate, Button},
-    window::{MonitorSelection, PrimaryWindow, WindowMode},
+    window::{MonitorSelection, PresentMode, PrimaryWindow, WindowMode},
 };
 
 use crate::{
@@ -51,6 +51,12 @@ struct DebugText;
 struct SensitivityReadout;
 
 #[derive(Component)]
+struct RenderDistanceReadout;
+
+#[derive(Component)]
+struct AntiAliasingReadout;
+
+#[derive(Component)]
 struct InventoryHint;
 
 #[derive(Component)]
@@ -64,6 +70,9 @@ struct InventoryBlockPicker(Block);
 
 #[derive(Component)]
 struct FullscreenToggleLabel;
+
+#[derive(Component)]
+struct VsyncToggleLabel;
 
 #[derive(Component)]
 struct SaveStatusLabel;
@@ -84,6 +93,9 @@ enum UiAction {
     ReturnToMainMenu,
     Quit,
     SensitivityStep(i8),
+    RenderDistanceStep(i8),
+    AntiAliasingStep(i8),
+    ToggleVsync,
     ToggleFullscreen,
     SaveGame,
     LoadGame,
@@ -120,6 +132,9 @@ impl Plugin for UiPlugin {
                     update_hotbar_selection_popup,
                     update_inventory_hover_tooltip,
                     update_sensitivity_readout,
+                    update_render_distance_readout,
+                    update_anti_aliasing_readout,
+                    update_vsync_toggle_label,
                     update_fullscreen_toggle_label,
                     update_save_status,
                     update_inventory_hint,
@@ -315,6 +330,116 @@ fn setup_options_menu(commands: &mut Commands) {
                     None,
                 );
             });
+        add_label(panel, "GRAPHICS", 24.0, TEXT_COLOR);
+        add_label(panel, "Render Distance", 14.0, MUTED_TEXT_COLOR);
+        panel
+            .spawn((
+                Node {
+                    width: Val::Percent(100.0),
+                    flex_direction: FlexDirection::Row,
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(12.0),
+                    ..default()
+                },
+                BackgroundColor(Color::NONE),
+            ))
+            .with_children(|row| {
+                add_button(
+                    row,
+                    "−",
+                    UiAction::RenderDistanceStep(-1),
+                    72.0,
+                    46.0,
+                    None,
+                    None,
+                );
+                row.spawn((
+                    Text::new(""),
+                    TextFont {
+                        font_size: FontSize::Px(17.0),
+                        ..default()
+                    },
+                    TextColor(TEXT_COLOR),
+                    TextLayout::justify(Justify::Center),
+                    Node {
+                        width: Val::Px(230.0),
+                        height: Val::Px(46.0),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    RenderDistanceReadout,
+                ));
+                add_button(
+                    row,
+                    "+",
+                    UiAction::RenderDistanceStep(1),
+                    72.0,
+                    46.0,
+                    None,
+                    None,
+                );
+            });
+        add_label(panel, "Anti-Aliasing", 14.0, MUTED_TEXT_COLOR);
+        panel
+            .spawn((
+                Node {
+                    width: Val::Percent(100.0),
+                    flex_direction: FlexDirection::Row,
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(12.0),
+                    ..default()
+                },
+                BackgroundColor(Color::NONE),
+            ))
+            .with_children(|row| {
+                add_button(
+                    row,
+                    "−",
+                    UiAction::AntiAliasingStep(-1),
+                    72.0,
+                    46.0,
+                    None,
+                    None,
+                );
+                row.spawn((
+                    Text::new(""),
+                    TextFont {
+                        font_size: FontSize::Px(17.0),
+                        ..default()
+                    },
+                    TextColor(TEXT_COLOR),
+                    TextLayout::justify(Justify::Center),
+                    Node {
+                        width: Val::Px(230.0),
+                        height: Val::Px(46.0),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    AntiAliasingReadout,
+                ));
+                add_button(
+                    row,
+                    "+",
+                    UiAction::AntiAliasingStep(1),
+                    72.0,
+                    46.0,
+                    None,
+                    None,
+                );
+            });
+        add_button(
+            panel,
+            "V-Sync: Off",
+            UiAction::ToggleVsync,
+            340.0,
+            46.0,
+            None,
+            None,
+        );
         add_button(
             panel,
             "Enter Fullscreen",
@@ -688,6 +813,9 @@ fn add_button(
     if matches!(action, UiAction::ToggleFullscreen) {
         button.insert(FullscreenToggleLabel);
     }
+    if matches!(action, UiAction::ToggleVsync) {
+        button.insert(VsyncToggleLabel);
+    }
     button.observe(on_menu_action);
 }
 
@@ -800,6 +928,20 @@ fn on_menu_action(
         }
         UiAction::SensitivityStep(direction) => {
             settings.adjust_mouse_sensitivity(direction as f32 * 0.0002);
+        }
+        UiAction::RenderDistanceStep(direction) => {
+            settings.adjust_render_distance(direction as i32);
+        }
+        UiAction::AntiAliasingStep(direction) => settings.step_anti_aliasing(direction),
+        UiAction::ToggleVsync => {
+            settings.vsync_enabled = !settings.vsync_enabled;
+            if let Ok(mut window) = primary_window.single_mut() {
+                window.present_mode = if settings.vsync_enabled {
+                    PresentMode::AutoVsync
+                } else {
+                    PresentMode::AutoNoVsync
+                };
+            }
         }
         UiAction::ToggleFullscreen => {
             if let Ok(mut window) = primary_window.single_mut() {
@@ -1042,6 +1184,53 @@ fn update_sensitivity_readout(
     }
 }
 
+fn update_render_distance_readout(
+    settings: Res<GameSettings>,
+    mut readout: Query<&mut Text, With<RenderDistanceReadout>>,
+) {
+    if !settings.is_changed() {
+        return;
+    }
+    for mut text in &mut readout {
+        text.0 = format!("{} chunks", settings.render_distance);
+    }
+}
+
+fn update_anti_aliasing_readout(
+    settings: Res<GameSettings>,
+    mut readout: Query<&mut Text, With<AntiAliasingReadout>>,
+) {
+    if !settings.is_changed() {
+        return;
+    }
+    let label = match settings.anti_aliasing_samples {
+        1 => "Off".to_owned(),
+        samples => format!("{samples}×"),
+    };
+    for mut text in &mut readout {
+        text.0.clone_from(&label);
+    }
+}
+
+fn update_vsync_toggle_label(
+    settings: Res<GameSettings>,
+    mut labels: Query<&mut Text, With<VsyncToggleLabel>>,
+) {
+    if !settings.is_changed() {
+        return;
+    }
+    let label = if settings.vsync_enabled {
+        "V-Sync: On"
+    } else {
+        "V-Sync: Off (Uncapped)"
+    };
+    for mut text in &mut labels {
+        if text.0 != label {
+            text.0 = label.to_owned();
+        }
+    }
+}
+
 fn update_fullscreen_toggle_label(
     windows: Query<&Window, With<PrimaryWindow>>,
     mut labels: Query<&mut Text, With<FullscreenToggleLabel>>,
@@ -1091,12 +1280,14 @@ fn update_inventory_hint(
 }
 
 fn update_debug_text(
+    time: Res<Time>,
     state: Res<State<GameState>>,
     hotbar: Res<Hotbar>,
     selection: Res<Selection>,
     world: Res<WorldData>,
     player: Query<(&Transform, &PlayerVelocity), With<Player>>,
     mut debug_text: Query<&mut Text, With<DebugText>>,
+    mut smoothed_fps: Local<f32>,
 ) {
     if *state.get() != GameState::Playing {
         return;
@@ -1107,6 +1298,16 @@ fn update_debug_text(
     let Ok(mut text) = debug_text.single_mut() else {
         return;
     };
+    let delta = time.delta_secs();
+    if delta > 0.0 {
+        let instant_fps = 1.0 / delta;
+        let smoothing = 1.0 - (-delta / 0.5).exp();
+        *smoothed_fps = if *smoothed_fps == 0.0 {
+            instant_fps
+        } else {
+            *smoothed_fps + (instant_fps - *smoothed_fps) * smoothing
+        };
+    }
     let position = transform.translation;
     let chunk_x = (position.x.floor() as i32).div_euclid(CHUNK_SIZE);
     let chunk_z = (position.z.floor() as i32).div_euclid(CHUNK_SIZE);
@@ -1115,7 +1316,8 @@ fn update_debug_text(
         .map(|hit| world.block_at(hit.block).label())
         .unwrap_or("None");
     text.0 = format!(
-        "XYZ: {:.2} / {:.2} / {:.2}\nChunk: {}, {} | Loaded: {}\nHotbar: {} | Target: {} | Speed: {:.1} | F3 debug, E inventory",
+        "FPS: {:.0}\nXYZ: {:.2} / {:.2} / {:.2}\nChunk: {}, {} | Loaded: {}\nHotbar: {} | Target: {} | Speed: {:.1} | F3 debug, E inventory",
+        *smoothed_fps,
         position.x,
         position.y,
         position.z,

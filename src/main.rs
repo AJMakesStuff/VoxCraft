@@ -17,7 +17,7 @@ fn main() {
             primary_window: Some(Window {
                 title: "VoxCraft".to_owned(),
                 resolution: (1280, 720).into(),
-                present_mode: bevy::window::PresentMode::AutoVsync,
+                present_mode: bevy::window::PresentMode::AutoNoVsync,
                 ..default()
             }),
             ..default()

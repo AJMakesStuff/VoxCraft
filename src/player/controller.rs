@@ -1,6 +1,7 @@
 use bevy::{
     input::mouse::MouseMotion,
     prelude::*,
+    render::view::Msaa,
     window::{CursorGrabMode, CursorOptions},
 };
 
@@ -92,6 +93,7 @@ fn spawn_player(mut commands: Commands, settings: Res<crate::game::GameSettings>
     let ground = terrain_height(settings.seed, 0, 0) as f32;
     commands.spawn((
         Camera3d::default(),
+        Msaa::from_samples(settings.anti_aliasing_samples),
         Transform::from_xyz(0.0, ground + 1.0 + EYE_HEIGHT, 0.0),
         Player,
         PlayerVelocity::default(),

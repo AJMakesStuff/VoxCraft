@@ -16,6 +16,8 @@ pub struct GameSettings {
     seed_override: Option<u32>,
     pub render_distance: i32,
     pub mouse_sensitivity: f32,
+    pub vsync_enabled: bool,
+    pub anti_aliasing_samples: u32,
 }
 
 impl GameSettings {
@@ -25,6 +27,8 @@ impl GameSettings {
             seed_override: None,
             render_distance: 8,
             mouse_sensitivity: 0.0022,
+            vsync_enabled: false,
+            anti_aliasing_samples: 4,
         };
         for arg in std::env::args().skip(1) {
             if let Some(value) = arg.strip_prefix("--seed=") {
@@ -53,6 +57,19 @@ impl GameSettings {
         if delta.is_finite() {
             self.mouse_sensitivity = (self.mouse_sensitivity + delta).clamp(0.0001, 0.02);
         }
+    }
+
+    pub fn adjust_render_distance(&mut self, delta: i32) {
+        self.render_distance = (self.render_distance + delta).clamp(2, 16);
+    }
+
+    pub fn step_anti_aliasing(&mut self, direction: i8) {
+        self.anti_aliasing_samples = match (self.anti_aliasing_samples, direction.signum()) {
+            (1, 1) | (4, -1) => 2,
+            (2, 1) | (1, -1) => 4,
+            (4, 1) | (2, -1) => 1,
+            (samples, _) => samples,
+        };
     }
 }
 

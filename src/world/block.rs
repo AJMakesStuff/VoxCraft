@@ -152,7 +152,7 @@ impl Block {
             Self::Bricks => (0.62, 0.24, 0.18),
             Self::Snow => (0.88, 0.91, 0.96),
             Self::Gravel => (0.50, 0.48, 0.43),
-            Self::Obsidian => (0.21, 0.16, 0.30),
+            Self::Obsidian => (0.16, 0.14, 0.22),
             Self::GoldBlock => (0.92, 0.67, 0.12),
         };
         Vec4::new(r, g, b, 1.0)

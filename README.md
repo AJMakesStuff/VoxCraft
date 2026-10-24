@@ -19,7 +19,7 @@ Optional arguments:
 cargo run --release -- --seed=12345 --render-distance=8 --mouse-sensitivity=0.0022
 ```
 
-Render distance is measured in horizontal chunks and is clamped to 2–16. Mouse sensitivity is clamped to 0.0001–0.02. Defaults are a random terrain seed, render distance 8, and mouse sensitivity `0.0022`.
+Render distance is measured in horizontal chunks and is clamped to 2–16. Mouse sensitivity is clamped to 0.0001–0.02. Defaults are a random terrain seed, render distance 8, mouse sensitivity `0.0022`, V-Sync off, and 4× anti-aliasing.
 
 ## Controls
 
@@ -39,7 +39,7 @@ Render distance is measured in horizontal chunks and is clamped to 2–16. Mouse
 | 1–5 | Select a hotbar slot |
 | E | Open the block picker for the selected hotbar slot |
 | Escape | Open the pause menu; save, resume, change options, or return to the main menu |
-| Options | Use − / + to change mouse sensitivity; changes apply immediately |
+| Options | Use − / + to change mouse sensitivity, render distance, and anti-aliasing; toggle V-Sync and fullscreen; changes apply immediately |
 | F3 | Toggle coordinates and chunk debug information |
 
 ## Architecture
@@ -47,8 +47,8 @@ Render distance is measured in horizontal chunks and is clamped to 2–16. Mouse
 - `src/world/` defines block types, negative-safe coordinate conversion, seeded terrain, chunk storage, streaming, and combined exposed-face meshes.
 - `src/player/` contains the first-person camera, mouse look, movement, gravity, jumping, sprinting, flight, and an axis-aligned collision controller.
 - `src/interaction/` contains a voxel grid raycast, block selection, breaking particles, placement, and outline drawing.
-- `src/rendering/` sets up the directional sunlight, ambient light, world material, and blue sky clear color.
-- `src/ui/` creates the main menu, mouse sensitivity options, pause menu, image-only square hotbar and block picker, crosshair, and F3 debug text. Block cube icons are generated from the block face colors at startup.
+- `src/rendering/` sets up the directional sunlight, ambient light, world material, blue sky clear color, and applies the selected MSAA level to the player camera.
+- `src/ui/` creates the main menu, mouse sensitivity and graphics options (render distance, anti-aliasing, V-Sync, and fullscreen), pause menu, image-only square hotbar and block picker, crosshair, and F3 debug text. Block cube icons are generated from the block face colors at startup.
 
 Chunk generation and mesh assembly run on Bevy's async compute pool; completed meshes are uploaded in a paced main-thread queue. Returning to the main menu unloads terrain, cancels pending chunk work, clears edits, and resets the player spawn. Blocks use a generated 16 × 16 pixel texture atlas with nearest-neighbor sampling and vertex colors for face shading, so the project has no external asset downloads or copyrighted game assets.
 

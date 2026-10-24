@@ -68,7 +68,7 @@ pub(crate) fn block_texture_pixel(block: Block, x: u32, y: u32) -> u8 {
         Block::Bricks => (238, 22),
         Block::Snow => (252, 5),
         Block::Gravel => (235, 28),
-        Block::Obsidian => (226, 30),
+        Block::Obsidian => (20, 7),
         Block::GoldBlock => (244, 14),
     };
 
@@ -88,7 +88,11 @@ pub(crate) fn block_texture_pixel(block: Block, x: u32, y: u32) -> u8 {
     } else {
         0
     };
-    let grain_value = (base + grain + fleck).clamp(190, 255);
+    let grain_value = if block == Block::Obsidian {
+        (base + grain + fleck).clamp(8, 36)
+    } else {
+        (base + grain + fleck).clamp(190, 255)
+    };
     match block {
         Block::OakPlanks => {
             let plank_row = y / 5;
@@ -149,9 +153,9 @@ pub(crate) fn block_texture_pixel(block: Block, x: u32, y: u32) -> u8 {
         Block::Obsidian => {
             let vein = (x * 3 + y * 5 + (hash % 3)) % 13 == 0;
             if vein {
-                177
+                55
             } else if hash.rotate_left(7) % 53 == 0 {
-                255
+                72
             } else {
                 grain_value as u8
             }

@@ -171,6 +171,7 @@ fn unload_world(
 
 fn update_chunk_targets(
     mut world: ResMut<WorldData>,
+    settings: Res<GameSettings>,
     state: Res<State<GameState>>,
     player: Query<&Transform, With<Player>>,
     mut commands: Commands,
@@ -179,6 +180,11 @@ fn update_chunk_targets(
 ) {
     if matches!(*state.get(), GameState::MainMenu | GameState::Options) {
         return;
+    }
+    let render_distance = settings.render_distance.clamp(2, 16);
+    if world.render_distance != render_distance {
+        world.render_distance = render_distance;
+        world.last_center = None;
     }
     let Ok(player_transform) = player.single() else {
         return;
