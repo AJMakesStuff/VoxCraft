@@ -39,6 +39,13 @@ impl ChunkData {
     }
 
     pub fn set(&mut self, local: IVec3, block: Block) {
+        if !(0..CHUNK_SIZE).contains(&local.x)
+            || !(0..CHUNK_SIZE).contains(&local.y)
+            || !(0..CHUNK_SIZE).contains(&local.z)
+        {
+            return;
+        }
+
         self.blocks[index(local)] = block;
     }
 
@@ -102,5 +109,13 @@ mod tests {
         let local = IVec3::new(15, 7, 3);
         chunk.set(local, Block::Sand);
         assert_eq!(chunk.get(local), Block::Sand);
+    }
+
+    #[test]
+    fn out_of_bounds_local_coordinates_do_not_alias_other_blocks() {
+        let mut chunk = ChunkData::default();
+        chunk.set(IVec3::new(16, 0, 0), Block::Sand);
+
+        assert_eq!(chunk.get(IVec3::new(0, 0, 1)), Block::Air);
     }
 }
