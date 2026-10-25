@@ -8,33 +8,89 @@ pub const WORLD_HEIGHT: i32 = 48;
 pub(crate) struct TerrainNoise {
     hills: Fbm<Perlin>,
     detail: Fbm<Perlin>,
-    dry: Fbm<Perlin>,
+    climate: Fbm<Perlin>,
+    mountain_regions: Fbm<Perlin>,
+    mountain_detail: Fbm<Perlin>,
+}
+
+#[derive(Clone, Copy)]
+struct TerrainColumn {
+    height: i32,
+    surface: Block,
+    subsurface: Block,
+    subsurface_depth: i32,
+}
+
+impl TerrainColumn {
+    fn block_at(self, y: i32) -> Block {
+        if y > self.height {
+            Block::Air
+        } else if y == self.height {
+            self.surface
+        } else if y >= self.height - self.subsurface_depth {
+            self.subsurface
+        } else {
+            Block::Stone
+        }
+    }
 }
 
 impl TerrainNoise {
     pub(crate) fn new(seed: u32) -> Self {
         Self {
-            hills: Fbm::<Perlin>::new(seed).set_octaves(4).set_frequency(0.008),
+            hills: Fbm::<Perlin>::new(seed)
+                .set_octaves(3)
+                .set_frequency(0.0045),
             detail: Fbm::<Perlin>::new(seed.wrapping_add(1_337))
                 .set_octaves(2)
-                .set_frequency(0.035),
-            dry: Fbm::<Perlin>::new(seed ^ 0x5eed)
+                .set_frequency(0.04),
+            climate: Fbm::<Perlin>::new(seed ^ 0x5eed)
+                .set_octaves(3)
+                .set_frequency(0.0018),
+            mountain_regions: Fbm::<Perlin>::new(seed.wrapping_add(82_451))
                 .set_octaves(2)
-                .set_frequency(0.003),
+                .set_frequency(0.0025),
+            mountain_detail: Fbm::<Perlin>::new(seed ^ 0x6d6f_756e)
+                .set_octaves(3)
+                .set_frequency(0.006),
+        }
+    }
+
+    fn terrain_column(&self, x: i32, z: i32) -> TerrainColumn {
+        let point = [x as f64, z as f64];
+        let desert = smoothstep(0.34, 0.66, self.climate.get(point));
+        let mountain = smoothstep(0.60, 0.80, self.mountain_regions.get(point));
+        let ridge = 1.0 - self.mountain_detail.get(point).abs();
+        let height = (15.0 + self.hills.get(point) * 5.5 + self.detail.get(point) * 1.5
+            - desert * 1.0
+            + mountain * (7.0 + ridge * 17.0))
+            .round()
+            .clamp(6.0, 45.0) as i32;
+
+        let (surface, subsurface, subsurface_depth) = if mountain > 0.18 {
+            if height >= 35 {
+                (Block::Snow, Block::Stone, 1)
+            } else if mountain > 0.72 {
+                (Block::Stone, Block::Stone, 0)
+            } else {
+                (Block::Gravel, Block::Stone, 2)
+            }
+        } else if desert > 0.55 {
+            (Block::Sand, Block::Sand, 3)
+        } else {
+            (Block::Grass, Block::Dirt, 3)
+        };
+
+        TerrainColumn {
+            height,
+            surface,
+            subsurface,
+            subsurface_depth,
         }
     }
 
     pub(crate) fn terrain_height(&self, x: i32, z: i32) -> i32 {
-        let point = [x as f64, z as f64];
-        let hills = self.hills.get(point);
-        let detail = self.detail.get(point);
-        (16.0 + hills * 10.0 + detail * 2.0)
-            .round()
-            .clamp(5.0, 32.0) as i32
-    }
-
-    fn is_sandy(&self, x: i32, z: i32, height: i32) -> bool {
-        height <= 9 || self.dry.get([x as f64, z as f64]) > 0.42
+        self.terrain_column(x, z).height
     }
 
     pub(crate) fn block_at(&self, pos: IVec3) -> Block {
@@ -44,25 +100,13 @@ impl TerrainNoise {
         if pos.y == 0 {
             return Block::Bedrock;
         }
-        let height = self.terrain_height(pos.x, pos.z);
-        if pos.y > height {
-            return Block::Air;
-        }
-        if self.is_sandy(pos.x, pos.z, height) {
-            return if pos.y >= height - 2 {
-                Block::Sand
-            } else {
-                Block::Stone
-            };
-        }
-        if pos.y == height {
-            Block::Grass
-        } else if pos.y >= height - 3 {
-            Block::Dirt
-        } else {
-            Block::Stone
-        }
+        self.terrain_column(pos.x, pos.z).block_at(pos.y)
     }
+}
+
+fn smoothstep(edge0: f64, edge1: f64, value: f64) -> f64 {
+    let t = ((value - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
 pub fn terrain_height(seed: u32, x: i32, z: i32) -> i32 {
@@ -82,23 +126,12 @@ pub fn generate_chunk(seed: u32, coord: ChunkCoord) -> ChunkData {
         for x in 0..CHUNK_SIZE {
             let wx = origin.x + x;
             let wz = origin.z + z;
-            let height = noise.terrain_height(wx, wz);
-            let sandy = noise.is_sandy(wx, wz, height);
+            let column = noise.terrain_column(wx, wz);
             for wy in min_y..max_y {
                 let block = if wy == 0 {
                     Block::Bedrock
-                } else if wy > height {
-                    Block::Air
-                } else if sandy && wy >= height - 2 {
-                    Block::Sand
-                } else if sandy {
-                    Block::Stone
-                } else if wy == height {
-                    Block::Grass
-                } else if wy >= height - 3 {
-                    Block::Dirt
                 } else {
-                    Block::Stone
+                    column.block_at(wy)
                 };
                 chunk.set(IVec3::new(x, wy - origin.y, z), block);
             }
@@ -139,11 +172,10 @@ mod tests {
         let b = generate_chunk(77, ChunkCoord::new(-1, 0, 2));
         assert_eq!(a, b);
         let h = terrain_height(77, -3, 37);
-        let sandy = TerrainNoise::new(77).is_sandy(-3, 37, h);
         let noise = TerrainNoise::new(77);
         assert_eq!(
             noise.block_at(IVec3::new(-3, h, 37)),
-            if sandy { Block::Sand } else { Block::Grass }
+            noise.terrain_column(-3, 37).surface
         );
         assert_eq!(noise.block_at(IVec3::new(0, 0, 0)), Block::Bedrock);
         assert_eq!(noise.block_at(IVec3::new(0, WORLD_HEIGHT, 0)), Block::Air);
