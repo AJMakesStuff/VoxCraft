@@ -54,10 +54,8 @@ pub struct GameSettings {
 
 impl GameSettings {
     pub fn from_args() -> Self {
-        let (ground_shift_speed, flying_shift_speed) = load_shift_speeds().unwrap_or((
-            DEFAULT_GROUND_SHIFT_SPEED,
-            DEFAULT_FLYING_SHIFT_SPEED,
-        ));
+        let (ground_shift_speed, flying_shift_speed) =
+            load_shift_speeds().unwrap_or((DEFAULT_GROUND_SHIFT_SPEED, DEFAULT_FLYING_SHIFT_SPEED));
         let mut settings = Self {
             seed: fresh_seed(),
             seed_override: None,
@@ -170,12 +168,28 @@ pub enum GameState {
 #[derive(Resource, Default)]
 pub struct OptionsReturn(pub GameState);
 
+#[derive(Resource)]
+pub struct DayNightCycle {
+    pub(crate) phase: f32,
+    pub(crate) day: u32,
+}
+
+impl Default for DayNightCycle {
+    fn default() -> Self {
+        Self {
+            phase: 0.32,
+            day: 1,
+        }
+    }
+}
+
 pub struct GamePlugin;
 
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         app.init_state::<GameState>()
             .init_resource::<OptionsReturn>()
+            .init_resource::<DayNightCycle>()
             .add_plugins((
                 RenderingPlugin,
                 WorldPlugin,

@@ -22,11 +22,11 @@ use bevy::{
 
 use crate::{
     game::{
-        DISPLAY_RESOLUTIONS, DisplayMode, GameSettings, GameState, MAX_FLYING_SHIFT_SPEED,
-        MAX_GROUND_SHIFT_SPEED, MAX_MOUSE_SENSITIVITY, MAX_SAVE_NAME_CHARS, MAX_SAVE_SLOTS,
-        MIN_MOUSE_SENSITIVITY, MIN_SHIFT_SPEED, OptionsReturn, SaveFile, SaveStatus,
-        default_save_name, delete_save_slot, load_from_disk, normalize_save_name, save_slot_exists,
-        save_to_disk, save_user_settings,
+        DISPLAY_RESOLUTIONS, DayNightCycle, DisplayMode, GameSettings, GameState,
+        MAX_FLYING_SHIFT_SPEED, MAX_GROUND_SHIFT_SPEED, MAX_MOUSE_SENSITIVITY, MAX_SAVE_NAME_CHARS,
+        MAX_SAVE_SLOTS, MIN_MOUSE_SENSITIVITY, MIN_SHIFT_SPEED, OptionsReturn, SaveFile,
+        SaveStatus, default_save_name, delete_save_slot, load_from_disk, normalize_save_name,
+        save_slot_exists, save_to_disk, save_user_settings,
     },
     interaction::{HOTBAR_SLOTS, Hotbar, Selection},
     player::{PendingPlayerRestore, Player, PlayerLook, PlayerVelocity},
@@ -74,6 +74,9 @@ struct InventoryDragPreview;
 
 #[derive(Component)]
 struct DebugText;
+
+#[derive(Component)]
+struct DayNightReadout;
 
 #[derive(Component, Default)]
 struct RenderDistanceReadout;
@@ -311,6 +314,7 @@ impl Plugin for UiPlugin {
                     update_graphics_slider_readouts,
                     update_calibration_pattern,
                     update_save_status,
+                    update_day_night_readout,
                     update_inventory_hint,
                     update_debug_text,
                 )
@@ -338,6 +342,7 @@ fn setup_ui(
     setup_hotbar(&mut commands, &icons);
     setup_crosshair(&mut commands);
     setup_debug_text(&mut commands);
+    setup_day_night_readout(&mut commands);
 }
 
 fn create_screen(
@@ -1776,6 +1781,32 @@ fn setup_debug_text(commands: &mut Commands) {
     ));
 }
 
+fn setup_day_night_readout(commands: &mut Commands) {
+    commands.spawn((
+        Text::new("Day 1 | 07:40"),
+        TextFont {
+            font_size: FontSize::Px(15.0),
+            ..default()
+        },
+        TextColor(TEXT_COLOR),
+        TextLayout::no_wrap(),
+        Node {
+            position_type: PositionType::Absolute,
+            right: Val::Px(14.0),
+            top: Val::Px(14.0),
+            padding: UiRect::axes(Val::Px(12.0), Val::Px(7.0)),
+            border: UiRect::all(Val::Px(1.0)),
+            border_radius: BorderRadius::all(Val::Px(8.0)),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.015, 0.025, 0.032, 0.60)),
+        BorderColor::all(SOFT_BORDER),
+        GlobalZIndex(30),
+        DayNightReadout,
+        Visibility::Hidden,
+    ));
+}
+
 fn add_label(
     parent: &mut ChildSpawnerCommands<'_>,
     text: impl Into<String>,
@@ -2907,6 +2938,32 @@ fn update_save_status(
     }
     for mut text in &mut labels {
         text.0.clone_from(&status.0);
+    }
+}
+
+fn update_day_night_readout(
+    cycle: Res<DayNightCycle>,
+    state: Res<State<GameState>>,
+    mut readouts: Query<(&mut Text, &mut Visibility), With<DayNightReadout>>,
+) {
+    let total_minutes = (cycle.phase * 24.0 * 60.0).floor() as u32;
+    let hour = (total_minutes / 60) % 24;
+    let minute = total_minutes % 60;
+    let label = format!("Day {} | {hour:02}:{minute:02}", cycle.day);
+    let visible = matches!(
+        *state.get(),
+        GameState::Playing | GameState::Paused | GameState::Inventory
+    );
+
+    for (mut text, mut visibility) in &mut readouts {
+        if text.0 != label {
+            text.0.clone_from(&label);
+        }
+        *visibility = if visible {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
     }
 }
 

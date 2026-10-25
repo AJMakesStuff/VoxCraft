@@ -8,5 +8,6 @@ pub use save::{
     save_to_disk, save_user_settings,
 };
 pub use state::{
-    DISPLAY_RESOLUTIONS, DisplayMode, GamePlugin, GameSettings, GameState, OptionsReturn,
+    DISPLAY_RESOLUTIONS, DayNightCycle, DisplayMode, GamePlugin, GameSettings, GameState,
+    OptionsReturn,
 };
