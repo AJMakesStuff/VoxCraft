@@ -1,7 +1,10 @@
 use bevy::{
+    asset::RenderAssetUsages,
     camera::Hdr,
+    image::{Image, ImageSampler},
     light::NotShadowCaster,
     prelude::*,
+    render::render_resource::{Extent3d, TextureDimension, TextureFormat},
     render::view::{ColorGrading, Msaa},
 };
 
@@ -14,12 +17,24 @@ use crate::{
 const SUN_DIRECTION: Vec3 = Vec3::new(-20.0, 40.0, -110.0);
 const SUN_DISTANCE: f32 = 250.0;
 const SUN_RADIUS: f32 = 6.0;
+const SUN_CORONA_SIZE: f32 = 26.0;
+const SUN_FLARE_DISTANCE: f32 = 2.5;
 const DAY_LENGTH_SECONDS: f32 = 600.0;
 const DAYLIGHT_ILLUMINANCE: f32 = 13_000.0;
 const MOONLIGHT_ILLUMINANCE: f32 = 700.0;
 
 #[derive(Component)]
 struct VisibleSun;
+
+#[derive(Component)]
+struct SunCorona;
+
+#[derive(Component)]
+struct SunFlare {
+    axis_position: f32,
+    size: Vec2,
+    tint: Vec3,
+}
 
 #[derive(Component)]
 struct VisibleMoon;
@@ -99,9 +114,11 @@ fn setup_scene(
     commands.insert_resource(WorldMaterial(material));
 
     let celestial_mesh = meshes.add(Sphere::new(SUN_RADIUS).mesh().uv(32, 20));
+    let sun_surface = images.add(sun_surface_texture());
     let sun_material = materials.add(StandardMaterial {
-        base_color: Color::srgb(1.0, 0.88, 0.58),
-        emissive: LinearRgba::rgb(3.0, 2.2, 1.2),
+        base_color: Color::WHITE,
+        base_color_texture: Some(sun_surface),
+        emissive: LinearRgba::rgb(2.6, 1.4, 0.42),
         unlit: true,
         ..default()
     });
@@ -113,6 +130,57 @@ fn setup_scene(
         Visibility::Hidden,
         VisibleSun,
     ));
+
+    let glow_texture = images.add(radial_glow_texture(128, true));
+    let corona_mesh = meshes.add(Rectangle::new(SUN_CORONA_SIZE, SUN_CORONA_SIZE));
+    let corona_material = materials.add(StandardMaterial {
+        base_color: Color::srgba(1.0, 0.55, 0.20, 0.72),
+        base_color_texture: Some(glow_texture.clone()),
+        emissive: LinearRgba::rgb(1.7, 0.58, 0.12),
+        alpha_mode: AlphaMode::Add,
+        unlit: true,
+        ..default()
+    });
+    commands.spawn((
+        Mesh3d(corona_mesh),
+        MeshMaterial3d(corona_material),
+        Transform::IDENTITY,
+        NotShadowCaster,
+        Visibility::Hidden,
+        VisibleSun,
+        SunCorona,
+    ));
+
+    let flare_mesh = meshes.add(Rectangle::new(1.0, 1.0));
+    let flare_specs = [
+        (0.0, Vec2::splat(0.30), Vec3::new(1.0, 0.72, 0.38)),
+        (-0.48, Vec2::splat(0.38), Vec3::new(0.72, 0.90, 1.0)),
+        (-1.0, Vec2::splat(0.64), Vec3::new(1.0, 0.48, 0.25)),
+        (0.56, Vec2::new(1.10, 0.13), Vec3::new(1.0, 0.78, 0.42)),
+        (-1.62, Vec2::splat(0.24), Vec3::new(0.54, 0.78, 1.0)),
+    ];
+    for (axis_position, size, tint) in flare_specs {
+        let material = materials.add(StandardMaterial {
+            base_color: Color::srgba(tint.x, tint.y, tint.z, 0.0),
+            base_color_texture: Some(glow_texture.clone()),
+            emissive: LinearRgba::BLACK,
+            alpha_mode: AlphaMode::Add,
+            unlit: true,
+            ..default()
+        });
+        commands.spawn((
+            Mesh3d(flare_mesh.clone()),
+            MeshMaterial3d(material),
+            Transform::IDENTITY,
+            NotShadowCaster,
+            Visibility::Hidden,
+            SunFlare {
+                axis_position,
+                size,
+                tint,
+            },
+        ));
+    }
 
     let moon_material = materials.add(StandardMaterial {
         base_color: Color::srgb(0.72, 0.80, 0.96),
@@ -171,6 +239,7 @@ fn update_day_night(
             Has<VisibleMoon>,
             Has<SunLight>,
             Has<MoonLight>,
+            Has<SunCorona>,
         ),
         (
             Or<(
@@ -180,8 +249,19 @@ fn update_day_night(
                 With<MoonLight>,
             )>,
             Without<Player>,
+            Without<SunFlare>,
         ),
     >,
+    mut flares: Query<
+        (
+            &mut Transform,
+            &mut Visibility,
+            &MeshMaterial3d<StandardMaterial>,
+            &SunFlare,
+        ),
+        Without<Player>,
+    >,
+    mut materials: ResMut<Assets<StandardMaterial>>,
     mut ambient: ResMut<GlobalAmbientLight>,
     mut clear_color: ResMut<ClearColor>,
 ) {
@@ -203,8 +283,8 @@ fn update_day_night(
         *state.get(),
         GameState::Playing | GameState::Paused | GameState::Inventory
     );
-    let player_position = player
-        .single()
+    let player_transform = player.single().ok();
+    let player_position = player_transform
         .map(|transform| transform.translation)
         .unwrap_or(Vec3::ZERO);
     let sun_visible = in_world && sun_height > -0.08;
@@ -212,11 +292,28 @@ fn update_day_night(
     let sun_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, -sun_direction);
     let moon_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, sun_direction);
 
-    for (mut transform, visibility, light, is_sun, is_moon, is_sun_light, is_moon_light) in
-        &mut celestial
+    for (
+        mut transform,
+        visibility,
+        light,
+        is_sun,
+        is_moon,
+        is_sun_light,
+        is_moon_light,
+        is_sun_corona,
+    ) in &mut celestial
     {
         if is_sun {
-            transform.translation = player_position + sun_direction * SUN_DISTANCE;
+            transform.translation = player_position
+                + sun_direction
+                    * if is_sun_corona {
+                        SUN_DISTANCE + 0.5
+                    } else {
+                        SUN_DISTANCE
+                    };
+            if is_sun_corona {
+                transform.rotation = Quat::from_rotation_arc(Vec3::Z, -sun_direction);
+            }
             if let Some(mut visibility) = visibility {
                 *visibility = if sun_visible {
                     Visibility::Visible
@@ -249,6 +346,66 @@ fn update_day_night(
         }
     }
 
+    let camera_basis = player_transform.map(|transform| {
+        (
+            transform.rotation * Vec3::NEG_Z,
+            transform.rotation * Vec3::X,
+            transform.rotation * Vec3::Y,
+        )
+    });
+    let flare_alignment = camera_basis
+        .map(|(forward, _, _)| forward.dot(sun_direction))
+        .unwrap_or(-1.0);
+    let flare_intensity = if sun_visible {
+        smoothstep(
+            20.0_f32.to_radians().cos(),
+            1.5_f32.to_radians().cos(),
+            flare_alignment,
+        )
+    } else {
+        0.0
+    };
+    if let (Some(camera_transform), Some((forward, right, up))) = (player_transform, camera_basis) {
+        let forward_dot = forward.dot(sun_direction);
+        if forward_dot > 0.0 {
+            let sun_screen_position = Vec2::new(
+                right.dot(sun_direction) / forward_dot,
+                up.dot(sun_direction) / forward_dot,
+            ) * SUN_FLARE_DISTANCE;
+            for (mut transform, mut visibility, material_handle, flare) in &mut flares {
+                let alpha = flare_intensity * 0.72;
+                transform.translation = camera_transform.translation
+                    + forward * SUN_FLARE_DISTANCE
+                    + right * (sun_screen_position.x * flare.axis_position)
+                    + up * (sun_screen_position.y * flare.axis_position);
+                transform.rotation = camera_transform.rotation;
+                transform.scale = Vec3::new(flare.size.x, flare.size.y, 1.0);
+                *visibility = if alpha > 0.005 {
+                    Visibility::Visible
+                } else {
+                    Visibility::Hidden
+                };
+                if let Some(mut material) = materials.get_mut(&material_handle.0) {
+                    material.base_color =
+                        Color::srgba(flare.tint.x, flare.tint.y, flare.tint.z, alpha);
+                    material.emissive = LinearRgba::rgb(
+                        flare.tint.x * alpha * 0.65,
+                        flare.tint.y * alpha * 0.65,
+                        flare.tint.z * alpha * 0.65,
+                    );
+                }
+            }
+        } else {
+            for (_, mut visibility, material_handle, _) in &mut flares {
+                *visibility = Visibility::Hidden;
+                if let Some(mut material) = materials.get_mut(&material_handle.0) {
+                    material.base_color = Color::srgba(0.0, 0.0, 0.0, 0.0);
+                    material.emissive = LinearRgba::BLACK;
+                }
+            }
+        }
+    }
+
     let ambient_color = Vec3::new(0.12, 0.16, 0.30)
         .lerp(Vec3::new(0.78, 0.84, 1.0), daylight)
         .lerp(Vec3::new(1.0, 0.47, 0.26), twilight * 0.28);
@@ -264,4 +421,87 @@ fn update_day_night(
 fn smoothstep(edge0: f32, edge1: f32, value: f32) -> f32 {
     let t = ((value - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
+}
+
+fn sun_surface_texture() -> Image {
+    const WIDTH: u32 = 256;
+    const HEIGHT: u32 = 128;
+    let mut pixels = vec![0; (WIDTH * HEIGHT * 4) as usize];
+
+    for y in 0..HEIGHT {
+        for x in 0..WIDTH {
+            let u = x as f32 / WIDTH as f32;
+            let v = y as f32 / HEIGHT as f32;
+            let broad = (u * std::f32::consts::TAU * 3.0 + (v * std::f32::consts::TAU * 2.0).sin())
+                .sin()
+                * (v * std::f32::consts::TAU * 4.0).sin();
+            let medium = (u * std::f32::consts::TAU * 11.0
+                + (v * std::f32::consts::TAU * 7.0).cos())
+            .sin()
+                * (v * std::f32::consts::TAU * 9.0 + (u * std::f32::consts::TAU * 5.0).sin()).cos();
+            let fine =
+                (u * std::f32::consts::TAU * 29.0 + (v * std::f32::consts::TAU * 17.0).cos()).sin()
+                    * (v * std::f32::consts::TAU * 19.0).cos();
+            let heat = (0.57 + broad * 0.17 + medium * 0.11 + fine * 0.06).clamp(0.0, 1.0);
+            let index = ((y * WIDTH + x) * 4) as usize;
+            pixels[index] = 255;
+            pixels[index + 1] = (112.0 + heat * 136.0) as u8;
+            pixels[index + 2] = (20.0 + heat * 150.0) as u8;
+            pixels[index + 3] = 255;
+        }
+    }
+
+    let mut image = Image::new(
+        Extent3d {
+            width: WIDTH,
+            height: HEIGHT,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        pixels,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+    );
+    image.sampler = ImageSampler::linear();
+    image
+}
+
+fn radial_glow_texture(size: u32, corona_rays: bool) -> Image {
+    let mut pixels = vec![0; (size * size * 4) as usize];
+    let center = (size as f32 - 1.0) * 0.5;
+
+    for y in 0..size {
+        for x in 0..size {
+            let dx = (x as f32 - center) / center;
+            let dy = (y as f32 - center) / center;
+            let radius = (dx * dx + dy * dy).sqrt();
+            let mut alpha = (1.0 - smoothstep(0.12, 1.0, radius)) * 0.78;
+            if corona_rays {
+                let angle = dy.atan2(dx);
+                let ray = (angle * 12.0).cos().max(0.0).powf(14.0)
+                    * (1.0 - radius).clamp(0.0, 1.0)
+                    * 0.22;
+                alpha = (alpha + ray).clamp(0.0, 1.0);
+            }
+            let index = ((y * size + x) * 4) as usize;
+            pixels[index] = 255;
+            pixels[index + 1] = 255;
+            pixels[index + 2] = 255;
+            pixels[index + 3] = (alpha * 255.0) as u8;
+        }
+    }
+
+    let mut image = Image::new(
+        Extent3d {
+            width: size,
+            height: size,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        pixels,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+    );
+    image.sampler = ImageSampler::linear();
+    image
 }
