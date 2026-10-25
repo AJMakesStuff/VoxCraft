@@ -98,7 +98,7 @@ impl GameSettings {
     }
 
     pub fn adjust_render_distance(&mut self, delta: i32) {
-        self.render_distance = (self.render_distance + delta).clamp(2, 16);
+        self.render_distance = self.render_distance.saturating_add(delta).clamp(2, 16);
     }
 
     pub fn step_anti_aliasing(&mut self, direction: i8) {
@@ -202,6 +202,16 @@ impl Plugin for GamePlugin {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn extreme_render_distance_delta_clamps_without_overflow() {
+        let mut settings = super::GameSettings::from_args();
+        settings.render_distance = 8;
+
+        settings.adjust_render_distance(i32::MAX);
+
+        assert_eq!(settings.render_distance, 16);
+    }
+
     #[test]
     fn mouse_sensitivity_nan_is_clamped_to_a_finite_value() {
         let sensitivity = super::clamp_mouse_sensitivity("NaN".parse::<f32>().unwrap());
