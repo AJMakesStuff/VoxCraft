@@ -15,6 +15,9 @@ const PLAYER_RADIUS: f32 = 0.30;
 const PLAYER_HEADROOM: f32 = 0.18;
 const FLY_TAP_WINDOW_SECS: f32 = 0.35;
 const WALK_SPEED: f32 = 5.0;
+const HEAD_BOB_AMPLITUDE: f32 = 0.035;
+const HEAD_BOB_STRIDE_LENGTH: f32 = 1.8;
+const HEAD_BOB_FADE_SECS: f32 = 0.12;
 
 #[derive(Component)]
 pub struct Player;
@@ -32,6 +35,13 @@ pub(crate) struct PlayerLook {
     grounded: bool,
     pub(crate) flying: bool,
     last_space_press: Option<f32>,
+}
+
+#[derive(Component, Default)]
+struct PlayerHeadBob {
+    phase: f32,
+    offset: f32,
+    intensity: f32,
 }
 
 #[derive(Component)]
@@ -57,12 +67,20 @@ impl Plugin for PlayerPlugin {
 
 fn restore_loaded_player(
     mut pending: ResMut<PendingPlayerRestore>,
-    mut player: Query<(&mut Transform, &mut PlayerVelocity, &mut PlayerLook), With<Player>>,
+    mut player: Query<
+        (
+            &mut Transform,
+            &mut PlayerVelocity,
+            &mut PlayerLook,
+            &mut PlayerHeadBob,
+        ),
+        With<Player>,
+    >,
 ) {
     let Some((position, rotation, was_flying)) = pending.0.take() else {
         return;
     };
-    let Ok((mut transform, mut velocity, mut look)) = player.single_mut() else {
+    let Ok((mut transform, mut velocity, mut look, mut head_bob)) = player.single_mut() else {
         return;
     };
 
@@ -84,6 +102,7 @@ fn restore_loaded_player(
     look.grounded = false;
     look.flying = was_flying;
     look.last_space_press = None;
+    *head_bob = PlayerHeadBob::default();
     velocity.0 = Vec3::ZERO;
 }
 
@@ -111,6 +130,7 @@ fn spawn_player(mut commands: Commands, settings: Res<crate::game::GameSettings>
         Player,
         PlayerVelocity::default(),
         PlayerLook::default(),
+        PlayerHeadBob::default(),
         PlayerSpawnSeed(settings.seed),
     ));
 }
@@ -122,12 +142,15 @@ fn reset_player(
             &mut Transform,
             &mut PlayerVelocity,
             &mut PlayerLook,
+            &mut PlayerHeadBob,
             &mut PlayerSpawnSeed,
         ),
         With<Player>,
     >,
 ) {
-    let Ok((mut transform, mut velocity, mut look, mut spawn_seed)) = player.single_mut() else {
+    let Ok((mut transform, mut velocity, mut look, mut head_bob, mut spawn_seed)) =
+        player.single_mut()
+    else {
         return;
     };
     reset_player_state(
@@ -135,6 +158,7 @@ fn reset_player(
         &mut transform,
         &mut velocity,
         &mut look,
+        &mut head_bob,
         &mut spawn_seed,
     );
 }
@@ -146,12 +170,15 @@ fn reset_player_for_new_world_seed(
             &mut Transform,
             &mut PlayerVelocity,
             &mut PlayerLook,
+            &mut PlayerHeadBob,
             &mut PlayerSpawnSeed,
         ),
         With<Player>,
     >,
 ) {
-    let Ok((mut transform, mut velocity, mut look, mut spawn_seed)) = player.single_mut() else {
+    let Ok((mut transform, mut velocity, mut look, mut head_bob, mut spawn_seed)) =
+        player.single_mut()
+    else {
         return;
     };
     if spawn_seed.0 == settings.seed {
@@ -162,6 +189,7 @@ fn reset_player_for_new_world_seed(
         &mut transform,
         &mut velocity,
         &mut look,
+        &mut head_bob,
         &mut spawn_seed,
     );
 }
@@ -171,6 +199,7 @@ fn reset_player_state(
     transform: &mut Transform,
     velocity: &mut PlayerVelocity,
     look: &mut PlayerLook,
+    head_bob: &mut PlayerHeadBob,
     spawn_seed: &mut PlayerSpawnSeed,
 ) {
     let ground = terrain_height(seed, 0, 0) as f32;
@@ -182,6 +211,7 @@ fn reset_player_state(
     look.grounded = false;
     look.flying = false;
     look.last_space_press = None;
+    *head_bob = PlayerHeadBob::default();
     spawn_seed.0 = seed;
 }
 
@@ -241,17 +271,30 @@ fn movement(
     state: Res<State<GameState>>,
     settings: Res<GameSettings>,
     world: Res<WorldData>,
-    mut player: Query<(&mut Transform, &mut PlayerVelocity, &mut PlayerLook), With<Player>>,
+    mut player: Query<
+        (
+            &mut Transform,
+            &mut PlayerVelocity,
+            &mut PlayerLook,
+            &mut PlayerHeadBob,
+        ),
+        With<Player>,
+    >,
 ) {
-    let Ok((mut transform, mut velocity, mut look)) = player.single_mut() else {
+    let Ok((mut transform, mut velocity, mut look, mut head_bob)) = player.single_mut() else {
         return;
     };
     if *state.get() != GameState::Playing {
+        transform.translation.y -= head_bob.offset;
+        head_bob.offset = 0.0;
+        head_bob.intensity = 0.0;
         velocity.0 = Vec3::ZERO;
         look.last_space_press = None;
         return;
     }
     let dt = time.delta_secs().min(0.05);
+    transform.translation.y -= head_bob.offset;
+    head_bob.offset = 0.0;
     let yaw = look.yaw;
     let forward = Vec3::new(-yaw.sin(), 0.0, -yaw.cos());
     let right = Vec3::new(yaw.cos(), 0.0, -yaw.sin());
@@ -327,6 +370,17 @@ fn movement(
         velocity.0.y = 0.0;
     }
     transform.translation = next;
+
+    let horizontal_speed = velocity.0.x.hypot(velocity.0.z);
+    let walking = look.grounded && !look.flying && horizontal_speed > 0.1;
+    if walking {
+        head_bob.phase += horizontal_speed * dt * std::f32::consts::TAU / HEAD_BOB_STRIDE_LENGTH;
+    }
+    let target_intensity = if walking { 1.0 } else { 0.0 };
+    let blend = 1.0 - (-dt / HEAD_BOB_FADE_SECS).exp();
+    head_bob.intensity += (target_intensity - head_bob.intensity) * blend;
+    head_bob.offset = head_bob.phase.sin() * HEAD_BOB_AMPLITUDE * head_bob.intensity;
+    transform.translation.y += head_bob.offset;
 }
 
 fn register_space_press(look: &mut PlayerLook, now: f32) -> bool {
@@ -414,6 +468,7 @@ mod tests {
                 Transform::default(),
                 PlayerVelocity::default(),
                 PlayerLook::default(),
+                PlayerHeadBob::default(),
                 Player,
             ))
             .id();
@@ -438,6 +493,7 @@ mod tests {
                 Transform::default(),
                 PlayerVelocity::default(),
                 PlayerLook::default(),
+                PlayerHeadBob::default(),
                 Player,
             ))
             .id();
