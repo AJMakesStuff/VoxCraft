@@ -72,8 +72,9 @@ pub fn terrain_height(seed: u32, x: i32, z: i32) -> i32 {
 pub fn generate_chunk(seed: u32, coord: ChunkCoord) -> ChunkData {
     let mut chunk = ChunkData::default();
     let origin = coord.origin();
+    let min_y = origin.y.max(0);
     let max_y = (origin.y + CHUNK_SIZE).min(WORLD_HEIGHT);
-    if origin.y >= WORLD_HEIGHT {
+    if min_y >= max_y {
         return chunk;
     }
     let noise = TerrainNoise::new(seed);
@@ -83,7 +84,7 @@ pub fn generate_chunk(seed: u32, coord: ChunkCoord) -> ChunkData {
             let wz = origin.z + z;
             let height = noise.terrain_height(wx, wz);
             let sandy = noise.is_sandy(wx, wz, height);
-            for wy in origin.y..max_y {
+            for wy in min_y..max_y {
                 let block = if wy == 0 {
                     Block::Bedrock
                 } else if wy > height {
@@ -109,6 +110,28 @@ pub fn generate_chunk(seed: u32, coord: ChunkCoord) -> ChunkData {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generated_negative_y_chunk_matches_point_query() {
+        let coord = ChunkCoord::new(0, -1, 0);
+        let chunk = generate_chunk(77, coord);
+        let noise = TerrainNoise::new(77);
+        let origin = coord.origin();
+
+        for z in 0..CHUNK_SIZE {
+            for y in 0..CHUNK_SIZE {
+                for x in 0..CHUNK_SIZE {
+                    let world_pos = origin + IVec3::new(x, y, z);
+                    let generated_block: Block = chunk.get(IVec3::new(x, y, z));
+                    assert_eq!(
+                        generated_block,
+                        noise.block_at(world_pos),
+                        "block mismatch at {world_pos:?}"
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn generation_is_seeded_and_surface_layers_are_consistent() {
