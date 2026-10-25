@@ -182,8 +182,10 @@ fn setup_scene(
         ));
     }
 
+    let moon_surface = images.add(moon_surface_texture());
     let moon_material = materials.add(StandardMaterial {
         base_color: Color::srgb(0.72, 0.80, 0.96),
+        base_color_texture: Some(moon_surface),
         emissive: LinearRgba::rgb(0.16, 0.21, 0.34),
         unlit: true,
         ..default()
@@ -228,6 +230,7 @@ fn setup_scene(
 fn update_day_night(
     time: Res<Time>,
     state: Res<State<GameState>>,
+    settings: Res<GameSettings>,
     mut cycle: ResMut<DayNightCycle>,
     player: Query<&Transform, With<Player>>,
     mut celestial: Query<
@@ -266,7 +269,8 @@ fn update_day_night(
     mut clear_color: ResMut<ClearColor>,
 ) {
     if *state.get() == GameState::Playing {
-        let total_phase = cycle.phase + time.delta_secs() / DAY_LENGTH_SECONDS;
+        let total_phase =
+            cycle.phase + time.delta_secs() * settings.day_night_speed / DAY_LENGTH_SECONDS;
         let days_passed = total_phase.floor() as u32;
         cycle.day = cycle.day.saturating_add(days_passed);
         cycle.phase = total_phase.fract();
@@ -464,6 +468,105 @@ fn sun_surface_texture() -> Image {
     );
     image.sampler = ImageSampler::linear();
     image
+}
+
+fn moon_surface_texture() -> Image {
+    const WIDTH: u32 = 256;
+    const HEIGHT: u32 = 128;
+    const CRATER_COUNT: u32 = 320;
+    const GOLDEN_ANGLE: f32 = 2.399_963_1;
+
+    let craters: Vec<_> = (0..CRATER_COUNT)
+        .map(|index| {
+            let y = 1.0 - 2.0 * (index as f32 + 0.5) / CRATER_COUNT as f32;
+            let ring = (1.0 - y * y).sqrt();
+            let angle = index as f32 * GOLDEN_ANGLE + (moon_random(index, 1) - 0.5) * 0.22;
+            let center = Vec3::new(ring * angle.cos(), y, ring * angle.sin());
+            let size = moon_random(index, 2);
+            let radius = if size < 0.06 {
+                0.075 + moon_random(index, 3) * 0.055
+            } else if size < 0.30 {
+                0.034 + moon_random(index, 3) * 0.041
+            } else {
+                0.012 + moon_random(index, 3) * 0.025
+            };
+            let depth = 0.14 + moon_random(index, 4) * 0.24;
+            let chord_radius = 2.0 * (radius * 0.5).sin();
+            (center, chord_radius, depth, radius > 0.075)
+        })
+        .collect();
+
+    let mut pixels = vec![0; (WIDTH * HEIGHT * 4) as usize];
+    for y in 0..HEIGHT {
+        let latitude = (y as f32 / HEIGHT as f32 - 0.5) * std::f32::consts::PI;
+        let latitude_cos = latitude.cos();
+        for x in 0..WIDTH {
+            let longitude = (x as f32 / WIDTH as f32 - 0.5) * std::f32::consts::TAU;
+            let direction = Vec3::new(
+                latitude_cos * longitude.cos(),
+                latitude.sin(),
+                latitude_cos * longitude.sin(),
+            );
+
+            let maria = (direction.dot(Vec3::new(3.1, 1.2, -2.4)).sin()
+                * direction.dot(Vec3::new(-1.8, 3.5, 2.1)).cos())
+                * 0.075;
+            let surface_grain = (direction.dot(Vec3::new(16.0, -11.0, 9.0)).sin()
+                * direction.dot(Vec3::new(7.0, 19.0, 13.0)).cos())
+                * 0.025;
+            let mut luminance = 0.77 + maria + surface_grain;
+
+            for (center, crater_radius, depth, has_central_peak) in &craters {
+                let chord_squared = (2.0 * (1.0 - direction.dot(*center))).max(0.0);
+                let outer_radius = crater_radius * 1.18;
+                if chord_squared >= outer_radius * outer_radius {
+                    continue;
+                }
+
+                let crater_distance = chord_squared.sqrt() / crater_radius;
+                if crater_distance < 0.84 {
+                    let bowl = 1.0 - (crater_distance / 0.84).powi(2);
+                    luminance -= depth * bowl;
+                }
+                let rim_distance = (crater_distance - 0.93) / 0.13;
+                luminance += (-rim_distance * rim_distance).exp() * depth * 0.42;
+                if *has_central_peak && crater_distance < 0.13 {
+                    luminance += (1.0 - crater_distance / 0.13) * 0.045;
+                }
+            }
+
+            let shade = (luminance.clamp(0.24, 0.98) * 255.0) as u8;
+            let index = ((y * WIDTH + x) * 4) as usize;
+            pixels[index] = shade;
+            pixels[index + 1] = shade;
+            pixels[index + 2] = shade;
+            pixels[index + 3] = 255;
+        }
+    }
+
+    let mut image = Image::new(
+        Extent3d {
+            width: WIDTH,
+            height: HEIGHT,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        pixels,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+    );
+    image.sampler = ImageSampler::linear();
+    image
+}
+
+fn moon_random(index: u32, salt: u32) -> f32 {
+    let mut value = index
+        .wrapping_add(salt.wrapping_mul(0x9e37_79b9))
+        .wrapping_mul(0x85eb_ca6b);
+    value ^= value >> 13;
+    value = value.wrapping_mul(0xc2b2_ae35);
+    value ^= value >> 16;
+    (value as f32) / (u32::MAX as f32)
 }
 
 fn radial_glow_texture(size: u32, corona_rays: bool) -> Image {

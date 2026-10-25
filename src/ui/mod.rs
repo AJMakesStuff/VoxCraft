@@ -24,10 +24,10 @@ use bevy::{
 use crate::{
     game::{
         DISPLAY_RESOLUTIONS, DayNightCycle, DisplayMode, GameSettings, GameState,
-        MAX_FLYING_SHIFT_SPEED, MAX_GROUND_SHIFT_SPEED, MAX_MOUSE_SENSITIVITY, MAX_SAVE_NAME_CHARS,
-        MAX_SAVE_SLOTS, MIN_MOUSE_SENSITIVITY, MIN_SHIFT_SPEED, OptionsReturn, SaveFile,
-        SaveStatus, default_save_name, delete_save_slot, load_from_disk, normalize_save_name,
-        save_slot_exists, save_to_disk, save_user_settings,
+        MAX_DAY_NIGHT_SPEED, MAX_FLYING_SHIFT_SPEED, MAX_GROUND_SHIFT_SPEED, MAX_MOUSE_SENSITIVITY,
+        MAX_SAVE_NAME_CHARS, MAX_SAVE_SLOTS, MIN_DAY_NIGHT_SPEED, MIN_MOUSE_SENSITIVITY,
+        MIN_SHIFT_SPEED, OptionsReturn, SaveFile, SaveStatus, default_save_name, delete_save_slot,
+        load_from_disk, normalize_save_name, save_slot_exists, save_to_disk, save_user_settings,
     },
     interaction::{HOTBAR_SLOTS, Hotbar, Selection},
     player::{PendingPlayerRestore, Player, PlayerLook, PlayerVelocity},
@@ -63,6 +63,7 @@ enum OptionsMenuPage {
     Display,
     Graphics,
     ColorAndSync,
+    WorldAndTime,
 }
 
 #[derive(Component)]
@@ -137,6 +138,7 @@ enum GraphicsSliderKind {
     Brightness,
     Contrast,
     Gamma,
+    DayNightSpeed,
 }
 
 #[derive(Component)]
@@ -1127,6 +1129,15 @@ fn setup_options_menu(commands: &mut Commands, settings: &GameSettings) {
                     None,
                     None,
                 );
+                add_button(
+                    section,
+                    "World & Time",
+                    UiAction::OpenOptionsPage(OptionsMenuPage::WorldAndTime),
+                    520.0,
+                    46.0,
+                    None,
+                    None,
+                );
             });
 
         panel
@@ -1268,6 +1279,42 @@ fn setup_options_menu(commands: &mut Commands, settings: &GameSettings) {
                 add_calibration_pattern(section);
                 add_button(section, "HDR Rendering: Off", UiAction::ToggleHdr, 520.0, 42.0, None, None);
                 add_panel_label(section, "Uses a higher precision camera buffer. Direct HDR monitor output is not currently supported by Bevy.", 12.0, MUTED_TEXT_COLOR);
+                add_options_home_button(section);
+            });
+
+        panel
+            .spawn((
+                Node {
+                    width: Val::Percent(100.0),
+                    display: Display::None,
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(9.0),
+                    padding: UiRect::all(Val::Px(17.0)),
+                    border_radius: BorderRadius::all(Val::Px(12.0)),
+                    ..default()
+                },
+                BackgroundColor(CARD_COLOR),
+                BorderColor::all(SOFT_BORDER),
+                OptionsPageContent(OptionsMenuPage::WorldAndTime),
+            ))
+            .with_children(|section| {
+                add_section_title(section, "WORLD & TIME");
+                add_graphics_slider(
+                    section,
+                    "Day/night cycle speed",
+                    GraphicsSliderKind::DayNightSpeed,
+                    MIN_DAY_NIGHT_SPEED,
+                    MAX_DAY_NIGHT_SPEED,
+                    settings.day_night_speed,
+                    0.25,
+                    2,
+                );
+                add_panel_label(
+                    section,
+                    "1.00x gives a ten-minute in-game day.",
+                    12.0,
+                    MUTED_TEXT_COLOR,
+                );
                 add_options_home_button(section);
             });
 
@@ -2961,6 +3008,10 @@ fn on_graphics_slider_change(
             settings.gamma = event.value.clamp(0.5, 2.0);
             settings.gamma
         }
+        GraphicsSliderKind::DayNightSpeed => {
+            settings.set_day_night_speed(event.value);
+            settings.day_night_speed
+        }
     };
     commands.entity(event.source).insert(SliderValue(value));
     if matches!(
@@ -2968,10 +3019,12 @@ fn on_graphics_slider_change(
         GraphicsSliderKind::MouseSensitivity
             | GraphicsSliderKind::GroundShiftSpeed
             | GraphicsSliderKind::FlyingShiftSpeed
+            | GraphicsSliderKind::DayNightSpeed
     ) && let Err(error) = save_user_settings(
         settings.mouse_sensitivity,
         settings.ground_shift_speed,
         settings.flying_shift_speed,
+        settings.day_night_speed,
     ) {
         eprintln!("Could not persist user settings: {error}");
     }
@@ -3017,6 +3070,7 @@ fn update_graphics_slider_readouts(
             GraphicsSliderKind::GroundShiftSpeed | GraphicsSliderKind::FlyingShiftSpeed => {
                 format!("{value:.1}")
             }
+            GraphicsSliderKind::DayNightSpeed => format!("{value:.2}x"),
             GraphicsSliderKind::FieldOfView => format!("{value:.0}"),
             _ => format!("{value:.2}"),
         };
@@ -3051,6 +3105,7 @@ fn graphics_slider_value(settings: &GameSettings, kind: GraphicsSliderKind) -> f
         GraphicsSliderKind::Brightness => settings.brightness,
         GraphicsSliderKind::Contrast => settings.contrast,
         GraphicsSliderKind::Gamma => settings.gamma,
+        GraphicsSliderKind::DayNightSpeed => settings.day_night_speed,
     }
 }
 

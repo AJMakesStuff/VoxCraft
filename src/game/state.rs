@@ -11,8 +11,9 @@ use crate::{
 };
 
 use super::save::{
-    DEFAULT_FLYING_SHIFT_SPEED, DEFAULT_GROUND_SHIFT_SPEED, DEFAULT_MOUSE_SENSITIVITY,
-    MAX_MOUSE_SENSITIVITY, MIN_MOUSE_SENSITIVITY, load_mouse_sensitivity, load_shift_speeds,
+    DEFAULT_DAY_NIGHT_SPEED, DEFAULT_FLYING_SHIFT_SPEED, DEFAULT_GROUND_SHIFT_SPEED,
+    DEFAULT_MOUSE_SENSITIVITY, MAX_DAY_NIGHT_SPEED, MAX_MOUSE_SENSITIVITY, MIN_DAY_NIGHT_SPEED,
+    MIN_MOUSE_SENSITIVITY, load_day_night_speed, load_mouse_sensitivity, load_shift_speeds,
 };
 
 pub const DISPLAY_RESOLUTIONS: [(u32, u32); 5] = [
@@ -39,6 +40,7 @@ pub struct GameSettings {
     pub mouse_sensitivity: f32,
     pub ground_shift_speed: f32,
     pub flying_shift_speed: f32,
+    pub day_night_speed: f32,
     pub vsync_enabled: bool,
     pub adaptive_sync_enabled: bool,
     pub anti_aliasing_samples: u32,
@@ -63,6 +65,7 @@ impl GameSettings {
             mouse_sensitivity: load_mouse_sensitivity().unwrap_or(DEFAULT_MOUSE_SENSITIVITY),
             ground_shift_speed,
             flying_shift_speed,
+            day_night_speed: load_day_night_speed().unwrap_or(DEFAULT_DAY_NIGHT_SPEED),
             vsync_enabled: false,
             adaptive_sync_enabled: false,
             anti_aliasing_samples: 4,
@@ -99,6 +102,14 @@ impl GameSettings {
 
     pub fn adjust_render_distance(&mut self, delta: i32) {
         self.render_distance = self.render_distance.saturating_add(delta).clamp(2, 16);
+    }
+
+    pub fn set_day_night_speed(&mut self, speed: f32) {
+        self.day_night_speed = if speed.is_finite() {
+            speed.clamp(MIN_DAY_NIGHT_SPEED, MAX_DAY_NIGHT_SPEED)
+        } else {
+            DEFAULT_DAY_NIGHT_SPEED
+        };
     }
 
     pub fn step_anti_aliasing(&mut self, direction: i8) {

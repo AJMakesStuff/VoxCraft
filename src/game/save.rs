@@ -20,6 +20,9 @@ pub const DEFAULT_FLYING_SHIFT_SPEED: f32 = 12.0;
 pub const MIN_SHIFT_SPEED: f32 = 5.0;
 pub const MAX_GROUND_SHIFT_SPEED: f32 = 20.0;
 pub const MAX_FLYING_SHIFT_SPEED: f32 = 40.0;
+pub const DEFAULT_DAY_NIGHT_SPEED: f32 = 1.0;
+pub const MIN_DAY_NIGHT_SPEED: f32 = 0.25;
+pub const MAX_DAY_NIGHT_SPEED: f32 = 4.0;
 
 #[derive(Resource)]
 pub struct SaveStatus(pub String);
@@ -58,6 +61,7 @@ struct UserSettingsFile {
     mouse_sensitivity: f32,
     ground_shift_speed: f32,
     flying_shift_speed: f32,
+    day_night_speed: f32,
 }
 
 impl Default for UserSettingsFile {
@@ -66,6 +70,7 @@ impl Default for UserSettingsFile {
             mouse_sensitivity: DEFAULT_MOUSE_SENSITIVITY,
             ground_shift_speed: DEFAULT_GROUND_SHIFT_SPEED,
             flying_shift_speed: DEFAULT_FLYING_SHIFT_SPEED,
+            day_night_speed: DEFAULT_DAY_NIGHT_SPEED,
         }
     }
 }
@@ -267,14 +272,25 @@ pub fn load_shift_speeds() -> Option<(f32, f32)> {
     Some((ground_speed, flying_speed))
 }
 
+pub fn load_day_night_speed() -> Option<f32> {
+    let speed = load_user_settings_file()?.day_night_speed;
+    Some(if speed.is_finite() {
+        speed.clamp(MIN_DAY_NIGHT_SPEED, MAX_DAY_NIGHT_SPEED)
+    } else {
+        DEFAULT_DAY_NIGHT_SPEED
+    })
+}
+
 pub fn save_user_settings(
     mouse_sensitivity: f32,
     ground_shift_speed: f32,
     flying_shift_speed: f32,
+    day_night_speed: f32,
 ) -> Result<(), String> {
     if !mouse_sensitivity.is_finite()
         || !ground_shift_speed.is_finite()
         || !flying_shift_speed.is_finite()
+        || !day_night_speed.is_finite()
     {
         return Err("User settings must be finite numbers.".to_owned());
     }
@@ -287,6 +303,7 @@ pub fn save_user_settings(
         mouse_sensitivity: mouse_sensitivity.clamp(MIN_MOUSE_SENSITIVITY, MAX_MOUSE_SENSITIVITY),
         ground_shift_speed: ground_shift_speed.clamp(MIN_SHIFT_SPEED, MAX_GROUND_SHIFT_SPEED),
         flying_shift_speed: flying_shift_speed.clamp(MIN_SHIFT_SPEED, MAX_FLYING_SHIFT_SPEED),
+        day_night_speed: day_night_speed.clamp(MIN_DAY_NIGHT_SPEED, MAX_DAY_NIGHT_SPEED),
     };
     let json = serde_json::to_vec_pretty(&settings)
         .map_err(|error| format!("Could not encode settings: {error}"))?;
