@@ -10,6 +10,15 @@ use crate::{
 
 const SAVE_VERSION: u32 = 1;
 
+pub const DEFAULT_MOUSE_SENSITIVITY: f32 = 0.0022;
+pub const MIN_MOUSE_SENSITIVITY: f32 = 0.0001;
+pub const MAX_MOUSE_SENSITIVITY: f32 = 0.02;
+pub const DEFAULT_GROUND_SHIFT_SPEED: f32 = 8.0;
+pub const DEFAULT_FLYING_SHIFT_SPEED: f32 = 12.0;
+pub const MIN_SHIFT_SPEED: f32 = 5.0;
+pub const MAX_GROUND_SHIFT_SPEED: f32 = 20.0;
+pub const MAX_FLYING_SHIFT_SPEED: f32 = 40.0;
+
 #[derive(Resource)]
 pub struct SaveStatus(pub String);
 
@@ -26,6 +35,8 @@ pub struct SaveFile {
     pub terrain_seed: u32,
     pub player_position: [f32; 3],
     pub player_rotation: [f32; 4],
+    #[serde(default)]
+    pub was_flying: bool,
     pub hotbar_blocks: [u8; HOTBAR_SLOTS],
     pub hotbar_selected: usize,
     pub edits: Vec<SavedEdit>,
@@ -38,12 +49,30 @@ pub struct SavedEdit {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(default)]
 struct UserSettingsFile {
     mouse_sensitivity: f32,
+    ground_shift_speed: f32,
+    flying_shift_speed: f32,
+}
+
+impl Default for UserSettingsFile {
+    fn default() -> Self {
+        Self {
+            mouse_sensitivity: DEFAULT_MOUSE_SENSITIVITY,
+            ground_shift_speed: DEFAULT_GROUND_SHIFT_SPEED,
+            flying_shift_speed: DEFAULT_FLYING_SHIFT_SPEED,
+        }
+    }
 }
 
 impl SaveFile {
-    pub fn capture(world: &WorldData, player: &Transform, hotbar: &Hotbar) -> Self {
+    pub fn capture(
+        world: &WorldData,
+        player: &Transform,
+        hotbar: &Hotbar,
+        was_flying: bool,
+    ) -> Self {
         let mut edits: Vec<_> = world
             .overrides
             .iter()
@@ -59,6 +88,7 @@ impl SaveFile {
             terrain_seed: world.seed,
             player_position: player.translation.to_array(),
             player_rotation: player.rotation.to_array(),
+            was_flying,
             hotbar_blocks: hotbar.slots.map(|block| block as u8),
             hotbar_selected: hotbar.selected,
             edits,
@@ -139,17 +169,46 @@ pub fn load_from_disk() -> Result<SaveFile, String> {
 }
 
 pub fn load_mouse_sensitivity() -> Option<f32> {
-    let json = fs::read_to_string(settings_file_path()).ok()?;
-    let settings: UserSettingsFile = serde_json::from_str(&json).ok()?;
+    let settings = load_user_settings_file()?;
     settings
         .mouse_sensitivity
         .is_finite()
-        .then(|| settings.mouse_sensitivity.clamp(0.0001, 0.02))
+        .then(|| {
+            settings
+                .mouse_sensitivity
+                .clamp(MIN_MOUSE_SENSITIVITY, MAX_MOUSE_SENSITIVITY)
+        })
 }
 
-pub fn save_mouse_sensitivity(mouse_sensitivity: f32) -> Result<(), String> {
-    if !mouse_sensitivity.is_finite() {
-        return Err("Mouse sensitivity must be a finite number.".to_owned());
+pub fn load_shift_speeds() -> Option<(f32, f32)> {
+    let settings = load_user_settings_file()?;
+    let ground_speed = if settings.ground_shift_speed.is_finite() {
+        settings
+            .ground_shift_speed
+            .clamp(MIN_SHIFT_SPEED, MAX_GROUND_SHIFT_SPEED)
+    } else {
+        DEFAULT_GROUND_SHIFT_SPEED
+    };
+    let flying_speed = if settings.flying_shift_speed.is_finite() {
+        settings
+            .flying_shift_speed
+            .clamp(MIN_SHIFT_SPEED, MAX_FLYING_SHIFT_SPEED)
+    } else {
+        DEFAULT_FLYING_SHIFT_SPEED
+    };
+    Some((ground_speed, flying_speed))
+}
+
+pub fn save_user_settings(
+    mouse_sensitivity: f32,
+    ground_shift_speed: f32,
+    flying_shift_speed: f32,
+) -> Result<(), String> {
+    if !mouse_sensitivity.is_finite()
+        || !ground_shift_speed.is_finite()
+        || !flying_shift_speed.is_finite()
+    {
+        return Err("User settings must be finite numbers.".to_owned());
     }
     let path = settings_file_path();
     if let Some(parent) = path.parent() {
@@ -157,11 +216,19 @@ pub fn save_mouse_sensitivity(mouse_sensitivity: f32) -> Result<(), String> {
             .map_err(|error| format!("Could not create settings folder: {error}"))?;
     }
     let settings = UserSettingsFile {
-        mouse_sensitivity: mouse_sensitivity.clamp(0.0001, 0.02),
+        mouse_sensitivity: mouse_sensitivity
+            .clamp(MIN_MOUSE_SENSITIVITY, MAX_MOUSE_SENSITIVITY),
+        ground_shift_speed: ground_shift_speed.clamp(MIN_SHIFT_SPEED, MAX_GROUND_SHIFT_SPEED),
+        flying_shift_speed: flying_shift_speed.clamp(MIN_SHIFT_SPEED, MAX_FLYING_SHIFT_SPEED),
     };
     let json = serde_json::to_vec_pretty(&settings)
         .map_err(|error| format!("Could not encode settings: {error}"))?;
     fs::write(path, json).map_err(|error| format!("Could not write settings: {error}"))
+}
+
+fn load_user_settings_file() -> Option<UserSettingsFile> {
+    let json = fs::read_to_string(settings_file_path()).ok()?;
+    serde_json::from_str(&json).ok()
 }
 
 fn save_file_path() -> PathBuf {

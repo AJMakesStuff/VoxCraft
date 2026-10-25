@@ -15,8 +15,6 @@ const PLAYER_RADIUS: f32 = 0.30;
 const PLAYER_HEADROOM: f32 = 0.18;
 const FLY_TAP_WINDOW_SECS: f32 = 0.35;
 const WALK_SPEED: f32 = 5.0;
-const SPRINT_SPEED: f32 = 8.0;
-const FLY_SPRINT_SPEED: f32 = 12.0;
 
 #[derive(Component)]
 pub struct Player;
@@ -25,14 +23,14 @@ pub struct Player;
 pub struct PlayerVelocity(pub Vec3);
 
 #[derive(Resource, Default)]
-pub struct PendingPlayerRestore(pub Option<([f32; 3], [f32; 4])>);
+pub struct PendingPlayerRestore(pub Option<([f32; 3], [f32; 4], bool)>);
 
 #[derive(Component, Default)]
-struct PlayerLook {
+pub(crate) struct PlayerLook {
     yaw: f32,
     pitch: f32,
     grounded: bool,
-    flying: bool,
+    pub(crate) flying: bool,
     last_space_press: Option<f32>,
 }
 
@@ -61,7 +59,7 @@ fn restore_loaded_player(
     mut pending: ResMut<PendingPlayerRestore>,
     mut player: Query<(&mut Transform, &mut PlayerVelocity, &mut PlayerLook), With<Player>>,
 ) {
-    let Some((position, rotation)) = pending.0.take() else {
+    let Some((position, rotation, was_flying)) = pending.0.take() else {
         return;
     };
     let Ok((mut transform, mut velocity, mut look)) = player.single_mut() else {
@@ -84,7 +82,7 @@ fn restore_loaded_player(
     look.yaw = yaw;
     look.pitch = pitch;
     look.grounded = false;
-    look.flying = false;
+    look.flying = was_flying;
     look.last_space_press = None;
     velocity.0 = Vec3::ZERO;
 }
@@ -241,6 +239,7 @@ fn movement(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
     state: Res<State<GameState>>,
+    settings: Res<GameSettings>,
     world: Res<WorldData>,
     mut player: Query<(&mut Transform, &mut PlayerVelocity, &mut PlayerLook), With<Player>>,
 ) {
@@ -275,9 +274,9 @@ fn movement(
     let sprinting = keys.pressed(KeyCode::ShiftLeft);
     let speed = if sprinting {
         if look.flying {
-            FLY_SPRINT_SPEED
+            settings.flying_shift_speed
         } else {
-            SPRINT_SPEED
+            settings.ground_shift_speed
         }
     } else {
         WALK_SPEED
@@ -408,7 +407,7 @@ mod tests {
     #[test]
     fn extreme_finite_rotation_normalizes_to_unit_quaternion() {
         let mut app = App::new();
-        app.insert_resource(PendingPlayerRestore(Some(([0.0; 3], [3.4e38; 4]))));
+        app.insert_resource(PendingPlayerRestore(Some(([0.0; 3], [3.4e38; 4], false))));
         let player = app
             .world_mut()
             .spawn((
@@ -432,7 +431,7 @@ mod tests {
     #[test]
     fn zero_saved_rotation_restores_identity_quaternion() {
         let mut app = App::new();
-        app.insert_resource(PendingPlayerRestore(Some(([0.0; 3], [0.0; 4]))));
+        app.insert_resource(PendingPlayerRestore(Some(([0.0; 3], [0.0; 4], false))));
         let player = app
             .world_mut()
             .spawn((

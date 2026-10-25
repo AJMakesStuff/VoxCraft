@@ -22,10 +22,11 @@ use bevy::{
 use crate::{
     game::{
         DISPLAY_RESOLUTIONS, DisplayMode, GameSettings, GameState, OptionsReturn, SaveFile,
-        SaveStatus, load_from_disk, save_mouse_sensitivity, save_to_disk,
+        SaveStatus, MAX_FLYING_SHIFT_SPEED, MAX_GROUND_SHIFT_SPEED, MAX_MOUSE_SENSITIVITY,
+        MIN_MOUSE_SENSITIVITY, MIN_SHIFT_SPEED, load_from_disk, save_to_disk, save_user_settings,
     },
     interaction::{HOTBAR_SLOTS, Hotbar, Selection},
-    player::{PendingPlayerRestore, Player, PlayerVelocity},
+    player::{PendingPlayerRestore, Player, PlayerLook, PlayerVelocity},
     world::{Block, CHUNK_SIZE, WorldData, block_texture_pixel_for_face},
 };
 
@@ -67,9 +68,6 @@ struct InventoryDragPreview;
 #[derive(Component)]
 struct DebugText;
 
-#[derive(Component)]
-struct SensitivityReadout;
-
 #[derive(Component, Default)]
 struct RenderDistanceReadout;
 
@@ -108,6 +106,9 @@ struct ResolutionReadout;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum GraphicsSliderKind {
+    MouseSensitivity,
+    GroundShiftSpeed,
+    FlyingShiftSpeed,
     FieldOfView,
     Brightness,
     Contrast,
@@ -163,7 +164,6 @@ enum UiAction {
     BackFromOptions,
     ReturnToMainMenu,
     Quit,
-    SensitivityStep(i8),
     RenderDistanceStep(i8),
     AntiAliasingStep(i8),
     DisplayModeStep(i8),
@@ -209,7 +209,6 @@ impl Plugin for UiPlugin {
                     update_hotbar_selection_popup,
                     update_inventory_hover_tooltip,
                     update_inventory_drag_preview,
-                    update_sensitivity_readout,
                     update_render_distance_readout,
                     update_anti_aliasing_readout,
                     update_vsync_toggle_label,
@@ -228,13 +227,18 @@ impl Plugin for UiPlugin {
     }
 }
 
-fn setup_ui(mut commands: Commands, mut images: ResMut<Assets<Image>>, hotbar: Res<Hotbar>) {
+fn setup_ui(
+    mut commands: Commands,
+    mut images: ResMut<Assets<Image>>,
+    hotbar: Res<Hotbar>,
+    settings: Res<GameSettings>,
+) {
     let icons = create_block_icons(&mut images);
     let has_saved_game = load_from_disk().is_ok();
     commands.insert_resource(icons.clone());
     setup_main_menu(&mut commands, &icons, has_saved_game);
     setup_new_game_confirmation(&mut commands);
-    setup_options_menu(&mut commands);
+    setup_options_menu(&mut commands, &settings);
     setup_pause_menu(&mut commands);
     setup_inventory(&mut commands, &icons, &hotbar);
     setup_hotbar(&mut commands, &icons);
@@ -341,7 +345,7 @@ fn setup_main_menu(commands: &mut Commands, icons: &BlockIconAssets, has_saved_g
                     min_width: Val::Px(230.0),
                     flex_direction: FlexDirection::Column,
                     justify_content: JustifyContent::SpaceBetween,
-                    align_items: AlignItems::FlexStart,
+                    align_items: AlignItems::Center,
                     padding: UiRect::all(Val::Px(32.0)),
                     row_gap: Val::Px(22.0),
                     border_radius: BorderRadius::new(
@@ -369,8 +373,10 @@ fn setup_main_menu(commands: &mut Commands, icons: &BlockIconAssets, has_saved_g
                 ));
                 hero.spawn((
                     Node {
+                        width: Val::Percent(100.0),
                         flex_direction: FlexDirection::Column,
                         row_gap: Val::Px(7.0),
+                        align_items: AlignItems::Center,
                         ..default()
                     },
                     BackgroundColor(Color::NONE),
@@ -388,7 +394,7 @@ fn setup_main_menu(commands: &mut Commands, icons: &BlockIconAssets, has_saved_g
                     width: Val::Percent(61.0),
                     flex_direction: FlexDirection::Column,
                     justify_content: JustifyContent::Center,
-                    align_items: AlignItems::FlexStart,
+                    align_items: AlignItems::Center,
                     row_gap: Val::Px(13.0),
                     padding: UiRect::all(Val::Px(38.0)),
                     border_radius: BorderRadius::new(
@@ -539,7 +545,7 @@ fn setup_new_game_confirmation(commands: &mut Commands) {
         });
 }
 
-fn setup_options_menu(commands: &mut Commands) {
+fn setup_options_menu(commands: &mut Commands, settings: &GameSettings) {
     let panel = create_screen(
         commands,
         GameState::Options,
@@ -571,43 +577,36 @@ fn setup_options_menu(commands: &mut Commands) {
             ))
             .with_children(|section| {
                 add_section_title(section, "CONTROLS");
-                add_left_label(section, "Mouse sensitivity", 13.0, MUTED_TEXT_COLOR);
-                section
-                    .spawn(Node {
-                        width: Val::Percent(100.0),
-                        min_height: Val::Px(32.0),
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        ..default()
-                    })
-                    .with_children(|readout| {
-                        readout.spawn((
-                            Text::new(""),
-                            TextFont {
-                                font_size: FontSize::Px(18.0),
-                                ..default()
-                            },
-                            TextColor(TEXT_COLOR),
-                            TextLayout::justify(Justify::Center),
-                            SensitivityReadout,
-                            Pickable::IGNORE,
-                        ));
-                    });
-                section
-                    .spawn((
-                        Node {
-                            width: Val::Percent(100.0),
-                            flex_direction: FlexDirection::Row,
-                            justify_content: JustifyContent::Center,
-                            column_gap: Val::Px(10.0),
-                            ..default()
-                        },
-                        BackgroundColor(Color::NONE),
-                    ))
-                    .with_children(|row| {
-                        add_button(row, "-", UiAction::SensitivityStep(-1), 76.0, 40.0, None, None);
-                        add_button(row, "+", UiAction::SensitivityStep(1), 76.0, 40.0, None, None);
-                    });
+                add_graphics_slider(
+                    section,
+                    "Mouse sensitivity",
+                    GraphicsSliderKind::MouseSensitivity,
+                    MIN_MOUSE_SENSITIVITY,
+                    MAX_MOUSE_SENSITIVITY,
+                    settings.mouse_sensitivity,
+                    0.0001,
+                    4,
+                );
+                add_graphics_slider(
+                    section,
+                    "Ground Shift speed (blocks/s)",
+                    GraphicsSliderKind::GroundShiftSpeed,
+                    MIN_SHIFT_SPEED,
+                    MAX_GROUND_SHIFT_SPEED,
+                    settings.ground_shift_speed,
+                    0.5,
+                    1,
+                );
+                add_graphics_slider(
+                    section,
+                    "Flying Shift speed (blocks/s)",
+                    GraphicsSliderKind::FlyingShiftSpeed,
+                    MIN_SHIFT_SPEED,
+                    MAX_FLYING_SHIFT_SPEED,
+                    settings.flying_shift_speed,
+                    0.5,
+                    1,
+                );
             });
 
         panel
@@ -625,9 +624,9 @@ fn setup_options_menu(commands: &mut Commands) {
             ))
             .with_children(|section| {
                 add_section_title(section, "DISPLAY & CAMERA");
-                add_left_label(section, "Display mode", 13.0, MUTED_TEXT_COLOR);
+                add_panel_label(section, "Display mode", 13.0, MUTED_TEXT_COLOR);
                 add_graphics_stepper::<DisplayModeReadout>(section, UiAction::DisplayModeStep(-1), UiAction::DisplayModeStep(1));
-                add_left_label(section, "Resolution", 13.0, MUTED_TEXT_COLOR);
+                add_panel_label(section, "Resolution", 13.0, MUTED_TEXT_COLOR);
                 add_graphics_stepper::<ResolutionReadout>(section, UiAction::ResolutionStep(-1), UiAction::ResolutionStep(1));
                 add_graphics_slider(section, "Field of view (deg)", GraphicsSliderKind::FieldOfView, 60.0, 120.0, 75.0, 1.0, 0);
             });
@@ -647,9 +646,9 @@ fn setup_options_menu(commands: &mut Commands) {
             ))
             .with_children(|section| {
                 add_section_title(section, "WORLD DETAIL");
-                add_left_label(section, "Render distance", 13.0, MUTED_TEXT_COLOR);
+                add_panel_label(section, "Render distance", 13.0, MUTED_TEXT_COLOR);
                 add_graphics_stepper::<RenderDistanceReadout>(section, UiAction::RenderDistanceStep(-1), UiAction::RenderDistanceStep(1));
-                add_left_label(section, "Anti-aliasing", 13.0, MUTED_TEXT_COLOR);
+                add_panel_label(section, "Anti-aliasing", 13.0, MUTED_TEXT_COLOR);
                 add_graphics_stepper::<AntiAliasingReadout>(section, UiAction::AntiAliasingStep(-1), UiAction::AntiAliasingStep(1));
             });
 
@@ -683,14 +682,14 @@ fn setup_options_menu(commands: &mut Commands) {
                         add_button(row, "V-Sync: Off", UiAction::ToggleVsync, 250.0, 42.0, None, None);
                         add_button(row, "Adaptive: Off", UiAction::ToggleAdaptiveSync, 250.0, 42.0, None, None);
                     });
-                add_left_label(section, "Adaptive presentation depends on your graphics backend; G-Sync / FreeSync are managed by the display driver.", 12.0, MUTED_TEXT_COLOR);
+                add_panel_label(section, "Adaptive presentation depends on your graphics backend; G-Sync / FreeSync are managed by the display driver.", 12.0, MUTED_TEXT_COLOR);
                 add_graphics_slider(section, "Brightness", GraphicsSliderKind::Brightness, 0.5, 1.5, 1.0, 0.05, 2);
                 add_graphics_slider(section, "Contrast", GraphicsSliderKind::Contrast, 0.5, 1.5, 1.0, 0.05, 2);
                 add_graphics_slider(section, "Gamma", GraphicsSliderKind::Gamma, 0.5, 2.0, 1.0, 0.05, 2);
-                add_left_label(section, "Live calibration preview", 12.0, MUTED_TEXT_COLOR);
+                add_panel_label(section, "Live calibration preview", 12.0, MUTED_TEXT_COLOR);
                 add_calibration_pattern(section);
                 add_button(section, "HDR Rendering: Off", UiAction::ToggleHdr, 520.0, 42.0, None, None);
-                add_left_label(section, "Uses a higher precision camera buffer. Direct HDR monitor output is not currently supported by Bevy.", 12.0, MUTED_TEXT_COLOR);
+                add_panel_label(section, "Uses a higher precision camera buffer. Direct HDR monitor output is not currently supported by Bevy.", 12.0, MUTED_TEXT_COLOR);
             });
 
         add_button(
@@ -774,111 +773,124 @@ fn add_graphics_slider(
         .spawn((
             Node {
                 width: Val::Percent(100.0),
-                flex_direction: FlexDirection::Row,
-                justify_content: JustifyContent::Center,
+                flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
-                column_gap: Val::Px(12.0),
+                row_gap: Val::Px(6.0),
                 ..default()
             },
             BackgroundColor(Color::NONE),
         ))
-        .with_children(|row| {
-            row.spawn((
+        .with_children(|group| {
+            group.spawn((
                 Text::new(label),
                 TextFont {
                     font_size: FontSize::Px(14.0),
                     ..default()
                 },
                 TextColor(MUTED_TEXT_COLOR),
-                TextLayout::no_wrap(),
+                TextLayout::justify(Justify::Center),
                 Node {
-                    width: Val::Px(150.0),
+                    width: Val::Percent(100.0),
                     ..default()
                 },
             ));
-            let mut slider = row.spawn((
-                Slider {
-                    track_click: TrackClick::Snap,
-                    ..default()
-                },
-                SliderValue(value),
-                SliderRange::new(min, max),
-                SliderStep(step),
-                SliderPrecision(precision),
-                GraphicsSlider(kind),
-                Hovered::default(),
-                Node {
-                    width: Val::Px(250.0),
-                    height: Val::Px(26.0),
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    ..default()
-                },
-            ));
-            slider.observe(on_graphics_slider_change);
-            slider.with_children(|slider| {
-                slider.spawn((
+            group
+                .spawn((
                     Node {
-                        height: Val::Px(6.0),
                         width: Val::Percent(100.0),
-                        border_radius: BorderRadius::MAX,
+                        flex_direction: FlexDirection::Row,
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(12.0),
                         ..default()
                     },
-                    BackgroundColor(Color::srgb(0.045, 0.06, 0.065)),
-                ));
-                slider
-                    .spawn(Node {
-                        display: Display::Flex,
-                        position_type: PositionType::Absolute,
-                        left: Val::Px(0.0),
-                        right: Val::Px(17.0),
-                        top: Val::Px(0.0),
-                        bottom: Val::Px(0.0),
-                        ..default()
-                    })
-                    .with_children(|track| {
-                        track.spawn((
-                            SliderThumb,
+                    BackgroundColor(Color::NONE),
+                ))
+                .with_children(|row| {
+                    let mut slider = row.spawn((
+                        Slider {
+                            track_click: TrackClick::Snap,
+                            ..default()
+                        },
+                        SliderValue(value),
+                        SliderRange::new(min, max),
+                        SliderStep(step),
+                        SliderPrecision(precision),
+                        GraphicsSlider(kind),
+                        Hovered::default(),
+                        Node {
+                            width: Val::Px(250.0),
+                            height: Val::Px(26.0),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            ..default()
+                        },
+                    ));
+                    slider.observe(on_graphics_slider_change);
+                    slider.with_children(|slider| {
+                        slider.spawn((
                             Node {
-                                width: Val::Px(17.0),
-                                height: Val::Px(17.0),
-                                position_type: PositionType::Absolute,
-                                left: Val::Percent(0.0),
-                                top: Val::Px(4.5),
+                                height: Val::Px(6.0),
+                                width: Val::Percent(100.0),
                                 border_radius: BorderRadius::MAX,
-                                border: UiRect::all(Val::Px(1.0)),
                                 ..default()
                             },
-                            BackgroundColor(TEXT_COLOR),
-                            BorderColor::all(ACCENT_COLOR),
+                            BackgroundColor(Color::srgb(0.045, 0.06, 0.065)),
+                        ));
+                        slider
+                            .spawn(Node {
+                                display: Display::Flex,
+                                position_type: PositionType::Absolute,
+                                left: Val::Px(0.0),
+                                right: Val::Px(17.0),
+                                top: Val::Px(0.0),
+                                bottom: Val::Px(0.0),
+                                ..default()
+                            })
+                            .with_children(|track| {
+                                track.spawn((
+                                    SliderThumb,
+                                    Node {
+                                        width: Val::Px(17.0),
+                                        height: Val::Px(17.0),
+                                        position_type: PositionType::Absolute,
+                                        left: Val::Percent(0.0),
+                                        top: Val::Px(4.5),
+                                        border_radius: BorderRadius::MAX,
+                                        border: UiRect::all(Val::Px(1.0)),
+                                        ..default()
+                                    },
+                                    BackgroundColor(TEXT_COLOR),
+                                    BorderColor::all(ACCENT_COLOR),
+                                ));
+                            });
+                    });
+                    row.spawn((
+                        Node {
+                            width: Val::Px(56.0),
+                            height: Val::Px(28.0),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            padding: UiRect::horizontal(Val::Px(6.0)),
+                            border_radius: BorderRadius::all(Val::Px(7.0)),
+                            ..default()
+                        },
+                        BackgroundColor(CARD_ALT_COLOR),
+                        BorderColor::all(SOFT_BORDER),
+                    ))
+                    .with_children(|readout| {
+                        readout.spawn((
+                            Text::new(""),
+                            TextFont {
+                                font_size: FontSize::Px(14.0),
+                                ..default()
+                            },
+                            TextColor(TEXT_COLOR),
+                            TextLayout::no_wrap().with_justify(Justify::Center),
+                            GraphicsSliderReadout(kind),
+                            Pickable::IGNORE,
                         ));
                     });
-            });
-            row.spawn((
-                Node {
-                    width: Val::Px(56.0),
-                    height: Val::Px(28.0),
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    padding: UiRect::horizontal(Val::Px(6.0)),
-                    border_radius: BorderRadius::all(Val::Px(7.0)),
-                    ..default()
-                },
-                BackgroundColor(CARD_ALT_COLOR),
-                BorderColor::all(SOFT_BORDER),
-            ))
-            .with_children(|readout| {
-                readout.spawn((
-                    Text::new(""),
-                    TextFont {
-                        font_size: FontSize::Px(14.0),
-                        ..default()
-                    },
-                    TextColor(TEXT_COLOR),
-                    TextLayout::no_wrap().with_justify(Justify::Center),
-                    GraphicsSliderReadout(kind),
-                    Pickable::IGNORE,
-                ));
             });
         });
 }
@@ -928,6 +940,7 @@ fn setup_pause_menu(commands: &mut Commands) {
                     min_width: Val::Px(220.0),
                     flex_direction: FlexDirection::Column,
                     justify_content: JustifyContent::SpaceBetween,
+                    align_items: AlignItems::Center,
                     padding: UiRect::all(Val::Px(30.0)),
                     row_gap: Val::Px(18.0),
                     border_radius: BorderRadius::new(
@@ -945,8 +958,10 @@ fn setup_pause_menu(commands: &mut Commands) {
                 sidebar
                     .spawn((
                         Node {
+                            width: Val::Percent(100.0),
                             flex_direction: FlexDirection::Column,
                             row_gap: Val::Px(8.0),
+                            align_items: AlignItems::Center,
                             ..default()
                         },
                         BackgroundColor(Color::NONE),
@@ -973,7 +988,7 @@ fn setup_pause_menu(commands: &mut Commands) {
                     width: Val::Percent(61.0),
                     flex_direction: FlexDirection::Column,
                     justify_content: JustifyContent::Center,
-                    align_items: AlignItems::FlexStart,
+                    align_items: AlignItems::Center,
                     row_gap: Val::Px(12.0),
                     padding: UiRect::all(Val::Px(34.0)),
                     border_radius: BorderRadius::new(
@@ -1300,7 +1315,7 @@ fn add_label(
     ));
 }
 
-fn add_left_label(
+fn add_panel_label(
     parent: &mut ChildSpawnerCommands<'_>,
     text: impl Into<String>,
     size: f32,
@@ -1313,7 +1328,7 @@ fn add_left_label(
             ..default()
         },
         TextColor(color),
-        TextLayout::justify(Justify::Left),
+        TextLayout::justify(Justify::Center),
         Node {
             width: Val::Percent(100.0),
             ..default()
@@ -1322,7 +1337,7 @@ fn add_left_label(
 }
 
 fn add_section_title(parent: &mut ChildSpawnerCommands<'_>, title: &str) {
-    add_left_label(parent, title, 12.0, ACCENT_COLOR);
+    add_panel_label(parent, title, 12.0, ACCENT_COLOR);
 }
 
 fn add_badge(parent: &mut ChildSpawnerCommands<'_>, label: &str, accent: bool) {
@@ -1337,7 +1352,7 @@ fn add_badge(parent: &mut ChildSpawnerCommands<'_>, label: &str, accent: bool) {
     };
     parent.spawn((
         Node {
-            align_self: AlignSelf::FlexStart,
+            align_self: AlignSelf::Center,
             padding: UiRect::axes(Val::Px(12.0), Val::Px(7.0)),
             border_radius: BorderRadius::MAX,
             ..default()
@@ -1356,22 +1371,32 @@ fn add_badge(parent: &mut ChildSpawnerCommands<'_>, label: &str, accent: bool) {
 
 fn add_save_status_label(parent: &mut ChildSpawnerCommands<'_>) {
     parent.spawn((
-        Text::new(""),
-        TextFont {
-            font_size: FontSize::Px(14.0),
-            ..default()
-        },
-        TextColor(MUTED_TEXT_COLOR),
-        TextLayout::no_wrap().with_justify(Justify::Center),
         Node {
             width: Val::Percent(100.0),
             min_height: Val::Px(22.0),
+            flex_direction: FlexDirection::Row,
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
             ..default()
         },
-        SaveStatusLabel,
-    ));
+        BackgroundColor(Color::NONE),
+    ))
+    .with_children(|label| {
+        label.spawn((
+            Text::new(""),
+            TextFont {
+                font_size: FontSize::Px(14.0),
+                ..default()
+            },
+            TextColor(MUTED_TEXT_COLOR),
+            TextLayout::justify(Justify::Center),
+            Node {
+                max_width: Val::Percent(100.0),
+                ..default()
+            },
+            SaveStatusLabel,
+        ));
+    });
 }
 
 fn add_button(
@@ -1660,7 +1685,7 @@ fn on_menu_action(
     state: Res<State<GameState>>,
     mut dragged: ResMut<DraggedBlock>,
     mut world: ResMut<WorldData>,
-    player: Query<&Transform, With<Player>>,
+    player: Query<(&Transform, &PlayerLook), With<Player>>,
     mut pending_player_restore: ResMut<PendingPlayerRestore>,
     mut save_status: ResMut<SaveStatus>,
     mut new_game_confirmation: ResMut<NewGameConfirmation>,
@@ -1696,8 +1721,8 @@ fn on_menu_action(
         UiAction::ReturnToMainMenu => {
             new_game_confirmation.0 = false;
             save_status.0 = match player.single() {
-                Ok(player) => {
-                    let save = SaveFile::capture(&world, player, &hotbar);
+                Ok((player, look)) => {
+                    let save = SaveFile::capture(&world, player, &hotbar, look.flying);
                     match save_to_disk(&save) {
                         Ok(()) => "Game saved automatically.".to_owned(),
                         Err(error) => format!("Automatic save failed: {error}"),
@@ -1709,12 +1734,6 @@ fn on_menu_action(
         }
         UiAction::Quit => {
             app_exit.write(AppExit::Success);
-        }
-        UiAction::SensitivityStep(direction) => {
-            settings.adjust_mouse_sensitivity(direction as f32 * 0.0002);
-            if let Err(error) = save_mouse_sensitivity(settings.mouse_sensitivity) {
-                eprintln!("Could not persist mouse sensitivity: {error}");
-            }
         }
         UiAction::RenderDistanceStep(direction) => {
             settings.adjust_render_distance(direction as i32);
@@ -1744,11 +1763,11 @@ fn on_menu_action(
         }
         UiAction::ToggleHdr => settings.hdr_enabled = !settings.hdr_enabled,
         UiAction::SaveGame => {
-            let Ok(player) = player.single() else {
+            let Ok((player, look)) = player.single() else {
                 save_status.0 = "Could not find the player to save.".to_owned();
                 return;
             };
-            let save = SaveFile::capture(&world, player, &hotbar);
+            let save = SaveFile::capture(&world, player, &hotbar, look.flying);
             save_status.0 = match save_to_disk(&save) {
                 Ok(()) => "Game saved.".to_owned(),
                 Err(error) => format!("Save failed: {error}"),
@@ -1768,7 +1787,11 @@ fn on_menu_action(
                 world.restore_saved_world(save.terrain_seed, edits);
                 hotbar.slots = hotbar_blocks;
                 hotbar.selected = save.hotbar_selected;
-                pending_player_restore.0 = Some((save.player_position, save.player_rotation));
+                pending_player_restore.0 = Some((
+                    save.player_position,
+                    save.player_rotation,
+                    save.was_flying,
+                ));
                 save_status.0 = format!("Loaded world seed {}.", save.terrain_seed);
                 next_state.set(GameState::Playing);
             }
@@ -2074,18 +2097,6 @@ fn update_inventory_drag_preview(
     *visibility = Visibility::Visible;
 }
 
-fn update_sensitivity_readout(
-    settings: Res<GameSettings>,
-    mut readout: Query<&mut Text, With<SensitivityReadout>>,
-) {
-    if !settings.is_changed() {
-        return;
-    }
-    for mut text in &mut readout {
-        text.0 = format!("Mouse sensitivity: {:.4}", settings.mouse_sensitivity);
-    }
-}
-
 fn update_render_distance_readout(
     settings: Res<GameSettings>,
     mut readout: Query<&mut Text, With<RenderDistanceReadout>>,
@@ -2212,6 +2223,22 @@ fn on_graphics_slider_change(
         return;
     };
     let value = match kind {
+        GraphicsSliderKind::MouseSensitivity => {
+            settings.mouse_sensitivity = event
+                .value
+                .clamp(MIN_MOUSE_SENSITIVITY, MAX_MOUSE_SENSITIVITY);
+            settings.mouse_sensitivity
+        }
+        GraphicsSliderKind::GroundShiftSpeed => {
+            settings.ground_shift_speed =
+                event.value.clamp(MIN_SHIFT_SPEED, MAX_GROUND_SHIFT_SPEED);
+            settings.ground_shift_speed
+        }
+        GraphicsSliderKind::FlyingShiftSpeed => {
+            settings.flying_shift_speed =
+                event.value.clamp(MIN_SHIFT_SPEED, MAX_FLYING_SHIFT_SPEED);
+            settings.flying_shift_speed
+        }
         GraphicsSliderKind::FieldOfView => {
             settings.field_of_view_degrees = event.value.clamp(60.0, 120.0);
             settings.field_of_view_degrees
@@ -2230,6 +2257,18 @@ fn on_graphics_slider_change(
         }
     };
     commands.entity(event.source).insert(SliderValue(value));
+    if matches!(
+        kind,
+        GraphicsSliderKind::MouseSensitivity
+            | GraphicsSliderKind::GroundShiftSpeed
+            | GraphicsSliderKind::FlyingShiftSpeed
+    ) && let Err(error) = save_user_settings(
+        settings.mouse_sensitivity,
+        settings.ground_shift_speed,
+        settings.flying_shift_speed,
+    ) {
+        eprintln!("Could not persist user settings: {error}");
+    }
 }
 
 fn update_graphics_slider_readouts(
@@ -2242,7 +2281,12 @@ fn update_graphics_slider_readouts(
 ) {
     for (entity, GraphicsSlider(kind), value, range) in &sliders {
         let desired = graphics_slider_value(&settings, *kind);
-        if (value.0 - desired).abs() > 0.001 {
+        let tolerance = if matches!(kind, GraphicsSliderKind::MouseSensitivity) {
+            0.000001
+        } else {
+            0.001
+        };
+        if (value.0 - desired).abs() > tolerance {
             commands.entity(entity).insert(SliderValue(desired));
         }
         let percent = if range.span() > 0.0 {
@@ -2262,10 +2306,13 @@ fn update_graphics_slider_readouts(
     }
     for (GraphicsSliderReadout(kind), mut text) in &mut labels {
         let value = graphics_slider_value(&settings, *kind);
-        let label = if *kind == GraphicsSliderKind::FieldOfView {
-            format!("{value:.0}")
-        } else {
-            format!("{value:.2}")
+        let label = match kind {
+            GraphicsSliderKind::MouseSensitivity => format!("{value:.4}"),
+            GraphicsSliderKind::GroundShiftSpeed | GraphicsSliderKind::FlyingShiftSpeed => {
+                format!("{value:.1}")
+            }
+            GraphicsSliderKind::FieldOfView => format!("{value:.0}"),
+            _ => format!("{value:.2}"),
         };
         if text.0 != label {
             text.0 = label;
@@ -2291,6 +2338,9 @@ fn update_calibration_pattern(
 
 fn graphics_slider_value(settings: &GameSettings, kind: GraphicsSliderKind) -> f32 {
     match kind {
+        GraphicsSliderKind::MouseSensitivity => settings.mouse_sensitivity,
+        GraphicsSliderKind::GroundShiftSpeed => settings.ground_shift_speed,
+        GraphicsSliderKind::FlyingShiftSpeed => settings.flying_shift_speed,
         GraphicsSliderKind::FieldOfView => settings.field_of_view_degrees,
         GraphicsSliderKind::Brightness => settings.brightness,
         GraphicsSliderKind::Contrast => settings.contrast,

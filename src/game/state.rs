@@ -10,7 +10,10 @@ use crate::{
     world::WorldPlugin,
 };
 
-use super::save::load_mouse_sensitivity;
+use super::save::{
+    DEFAULT_FLYING_SHIFT_SPEED, DEFAULT_GROUND_SHIFT_SPEED, DEFAULT_MOUSE_SENSITIVITY,
+    MAX_MOUSE_SENSITIVITY, MIN_MOUSE_SENSITIVITY, load_mouse_sensitivity, load_shift_speeds,
+};
 
 pub const DISPLAY_RESOLUTIONS: [(u32, u32); 5] = [
     (1280, 720),
@@ -34,6 +37,8 @@ pub struct GameSettings {
     seed_override: Option<u32>,
     pub render_distance: i32,
     pub mouse_sensitivity: f32,
+    pub ground_shift_speed: f32,
+    pub flying_shift_speed: f32,
     pub vsync_enabled: bool,
     pub adaptive_sync_enabled: bool,
     pub anti_aliasing_samples: u32,
@@ -49,11 +54,17 @@ pub struct GameSettings {
 
 impl GameSettings {
     pub fn from_args() -> Self {
+        let (ground_shift_speed, flying_shift_speed) = load_shift_speeds().unwrap_or((
+            DEFAULT_GROUND_SHIFT_SPEED,
+            DEFAULT_FLYING_SHIFT_SPEED,
+        ));
         let mut settings = Self {
             seed: fresh_seed(),
             seed_override: None,
             render_distance: 8,
-            mouse_sensitivity: load_mouse_sensitivity().unwrap_or(0.0022),
+            mouse_sensitivity: load_mouse_sensitivity().unwrap_or(DEFAULT_MOUSE_SENSITIVITY),
+            ground_shift_speed,
+            flying_shift_speed,
             vsync_enabled: false,
             adaptive_sync_enabled: false,
             anti_aliasing_samples: 4,
@@ -86,12 +97,6 @@ impl GameSettings {
 
     pub fn prepare_new_world_seed(&mut self) {
         self.seed = self.seed_override.unwrap_or_else(fresh_seed);
-    }
-
-    pub fn adjust_mouse_sensitivity(&mut self, delta: f32) {
-        if delta.is_finite() {
-            self.mouse_sensitivity = (self.mouse_sensitivity + delta).clamp(0.0001, 0.02);
-        }
     }
 
     pub fn adjust_render_distance(&mut self, delta: i32) {
@@ -130,9 +135,9 @@ impl GameSettings {
 
 fn clamp_mouse_sensitivity(sensitivity: f32) -> f32 {
     if sensitivity.is_finite() {
-        sensitivity.clamp(0.0001, 0.02)
+        sensitivity.clamp(MIN_MOUSE_SENSITIVITY, MAX_MOUSE_SENSITIVITY)
     } else {
-        0.0022
+        DEFAULT_MOUSE_SENSITIVITY
     }
 }
 
