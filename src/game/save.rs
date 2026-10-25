@@ -9,6 +9,7 @@ use crate::{
 };
 
 const SAVE_VERSION: u32 = 1;
+pub const MAX_SAVE_SLOTS: usize = 3;
 
 pub const DEFAULT_MOUSE_SENSITIVITY: f32 = 0.0022;
 pub const MIN_MOUSE_SENSITIVITY: f32 = 0.0001;
@@ -141,9 +142,9 @@ impl SaveFile {
     }
 }
 
-pub fn save_to_disk(save: &SaveFile) -> Result<(), String> {
+pub fn save_to_disk(slot: usize, save: &SaveFile) -> Result<(), String> {
     save.validate()?;
-    let path = save_file_path();
+    let path = save_file_path(slot)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .map_err(|error| format!("Could not create save folder: {error}"))?;
@@ -153,11 +154,18 @@ pub fn save_to_disk(save: &SaveFile) -> Result<(), String> {
     fs::write(path, json).map_err(|error| format!("Could not write save: {error}"))
 }
 
-pub fn load_from_disk() -> Result<SaveFile, String> {
-    let path = save_file_path();
+pub fn load_from_disk(slot: usize) -> Result<SaveFile, String> {
+    let path = save_file_path(slot)?;
+    let path = if path.exists() {
+        path
+    } else if slot == 1 && legacy_save_file_path().exists() {
+        legacy_save_file_path()
+    } else {
+        path
+    };
     let json = fs::read_to_string(path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
-            "No save found yet. Start and return from a game to create one.".to_owned()
+            format!("Save slot {slot} is empty.")
         } else {
             format!("Could not read save: {error}")
         }
@@ -168,16 +176,21 @@ pub fn load_from_disk() -> Result<SaveFile, String> {
     Ok(save)
 }
 
+pub fn save_slot_exists(slot: usize) -> bool {
+    if !(1..=MAX_SAVE_SLOTS).contains(&slot) {
+        return false;
+    }
+    save_file_path(slot).is_ok_and(|path| path.exists())
+        || (slot == 1 && legacy_save_file_path().exists())
+}
+
 pub fn load_mouse_sensitivity() -> Option<f32> {
     let settings = load_user_settings_file()?;
-    settings
-        .mouse_sensitivity
-        .is_finite()
-        .then(|| {
-            settings
-                .mouse_sensitivity
-                .clamp(MIN_MOUSE_SENSITIVITY, MAX_MOUSE_SENSITIVITY)
-        })
+    settings.mouse_sensitivity.is_finite().then(|| {
+        settings
+            .mouse_sensitivity
+            .clamp(MIN_MOUSE_SENSITIVITY, MAX_MOUSE_SENSITIVITY)
+    })
 }
 
 pub fn load_shift_speeds() -> Option<(f32, f32)> {
@@ -216,8 +229,7 @@ pub fn save_user_settings(
             .map_err(|error| format!("Could not create settings folder: {error}"))?;
     }
     let settings = UserSettingsFile {
-        mouse_sensitivity: mouse_sensitivity
-            .clamp(MIN_MOUSE_SENSITIVITY, MAX_MOUSE_SENSITIVITY),
+        mouse_sensitivity: mouse_sensitivity.clamp(MIN_MOUSE_SENSITIVITY, MAX_MOUSE_SENSITIVITY),
         ground_shift_speed: ground_shift_speed.clamp(MIN_SHIFT_SPEED, MAX_GROUND_SHIFT_SPEED),
         flying_shift_speed: flying_shift_speed.clamp(MIN_SHIFT_SPEED, MAX_FLYING_SHIFT_SPEED),
     };
@@ -231,7 +243,16 @@ fn load_user_settings_file() -> Option<UserSettingsFile> {
     serde_json::from_str(&json).ok()
 }
 
-fn save_file_path() -> PathBuf {
+fn save_file_path(slot: usize) -> Result<PathBuf, String> {
+    if !(1..=MAX_SAVE_SLOTS).contains(&slot) {
+        return Err(format!("Save slot must be between 1 and {MAX_SAVE_SLOTS}."));
+    }
+    Ok(save_data_dir()
+        .join("saves")
+        .join(format!("slot_{slot}.json")))
+}
+
+fn legacy_save_file_path() -> PathBuf {
     #[cfg(windows)]
     if let Some(root) = env::var_os("APPDATA") {
         return PathBuf::from(root).join("VoxCraft").join("save.json");
@@ -260,6 +281,33 @@ fn save_file_path() -> PathBuf {
     env::current_dir()
         .unwrap_or_default()
         .join("voxcraft_save.json")
+}
+
+fn save_data_dir() -> PathBuf {
+    #[cfg(windows)]
+    if let Some(root) = env::var_os("APPDATA") {
+        return PathBuf::from(root).join("VoxCraft");
+    }
+
+    #[cfg(target_os = "macos")]
+    if let Some(home) = env::var_os("HOME") {
+        return PathBuf::from(home)
+            .join("Library")
+            .join("Application Support")
+            .join("VoxCraft");
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    if let Some(root) = env::var_os("XDG_DATA_HOME") {
+        return PathBuf::from(root).join("voxcraft");
+    } else if let Some(home) = env::var_os("HOME") {
+        return PathBuf::from(home)
+            .join(".local")
+            .join("share")
+            .join("voxcraft");
+    }
+
+    env::current_dir().unwrap_or_default().join("voxcraft")
 }
 
 fn settings_file_path() -> PathBuf {

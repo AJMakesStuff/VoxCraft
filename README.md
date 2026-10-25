@@ -25,7 +25,7 @@ Render distance is measured in horizontal chunks and is clamped to 2–16. Mouse
 
 | Input | Action |
 | --- | --- |
-| Main menu | Resume a saved game or start a new world (with confirmation before replacing a save), open Options, or Quit |
+| Main menu | Load one of up to three saved worlds, start a new world in an empty slot (with confirmation before replacing a save), open Options, or Quit |
 | W / A / S / D | Move |
 | Mouse | Look |
 | Mouse wheel | Cycle through hotbar slots |
@@ -55,7 +55,7 @@ Graphics options apply immediately. Adaptive V-Sync uses the backend's adaptive 
 
 Chunk generation and mesh assembly run on Bevy's async compute pool; completed meshes are uploaded in a paced main-thread queue. Returning to the main menu saves the current game before unloading terrain, cancelling pending chunk work, clearing edits, and resetting the player spawn. Blocks use a generated 16 × 16 pixel texture atlas with nearest-neighbor sampling and vertex colors for face shading; placement and breaking effects are synthesized in code, so the project has no external asset downloads or copyrighted game assets.
 
-The game saves one local world slot when you choose Save Game in the pause menu or return to the main menu. The save includes its terrain seed, block edits, player position and view direction, and hotbar. Loading regenerates the terrain from that saved seed, so the landscape is the same each time; saved block edits are reapplied afterward. The main menu loads that save. Mouse sensitivity is stored separately and saved whenever it changes. On Windows, these files are stored at `%APPDATA%\VoxCraft\save.json` and `%APPDATA%\VoxCraft\settings.json`.
+The game supports up to three local world slots. Choose a slot from Load a World or Start a New World in the main menu; starting over in an occupied slot asks for confirmation. Save World in the pause menu and returning to the main menu automatically update the currently loaded or created slot. Each save includes its terrain seed, block edits, player position and view direction, and hotbar. Loading regenerates terrain from the saved seed, so the landscape is the same each time; saved block edits are reapplied afterward. Existing `save.json` files are available as Slot 1. Mouse sensitivity is stored separately and saved whenever it changes. On Windows, saves are stored at `%APPDATA%\VoxCraft\saves\slot_1.json` through `slot_3.json`, and settings at `%APPDATA%\VoxCraft\settings.json`.
 
 ## Checks
 

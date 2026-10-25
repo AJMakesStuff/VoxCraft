@@ -21,9 +21,10 @@ use bevy::{
 
 use crate::{
     game::{
-        DISPLAY_RESOLUTIONS, DisplayMode, GameSettings, GameState, OptionsReturn, SaveFile,
-        SaveStatus, MAX_FLYING_SHIFT_SPEED, MAX_GROUND_SHIFT_SPEED, MAX_MOUSE_SENSITIVITY,
-        MIN_MOUSE_SENSITIVITY, MIN_SHIFT_SPEED, load_from_disk, save_to_disk, save_user_settings,
+        DISPLAY_RESOLUTIONS, DisplayMode, GameSettings, GameState, MAX_FLYING_SHIFT_SPEED,
+        MAX_GROUND_SHIFT_SPEED, MAX_MOUSE_SENSITIVITY, MAX_SAVE_SLOTS, MIN_MOUSE_SENSITIVITY,
+        MIN_SHIFT_SPEED, OptionsReturn, SaveFile, SaveStatus, load_from_disk, save_slot_exists,
+        save_to_disk, save_user_settings,
     },
     interaction::{HOTBAR_SLOTS, Hotbar, Selection},
     player::{PendingPlayerRestore, Player, PlayerLook, PlayerVelocity},
@@ -130,8 +131,40 @@ struct SaveStatusLabel;
 #[derive(Component)]
 struct NewGameConfirmDialog;
 
-#[derive(Resource, Default)]
-struct NewGameConfirmation(bool);
+#[derive(Component)]
+struct NewGameConfirmMessage;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SaveDialogKind {
+    Load,
+    New,
+}
+
+#[derive(Component)]
+struct SaveSlotDialogRoot(SaveDialogKind);
+
+#[derive(Component)]
+struct SaveSlotLabel {
+    slot: usize,
+    kind: SaveDialogKind,
+}
+
+#[derive(Resource)]
+struct SaveFlow {
+    confirmation: Option<usize>,
+    dialog: Option<SaveDialogKind>,
+    current_slot: usize,
+}
+
+impl Default for SaveFlow {
+    fn default() -> Self {
+        Self {
+            confirmation: None,
+            dialog: None,
+            current_slot: 1,
+        }
+    }
+}
 
 #[derive(Component)]
 struct ButtonTint(Color);
@@ -146,16 +179,12 @@ struct ButtonPalette {
 #[derive(Component, Clone, Copy)]
 struct MenuButtonAction(UiAction);
 
-#[derive(Component, Clone, Copy)]
-enum MainMenuButtonRole {
-    Primary,
-    Secondary,
-}
-
 #[derive(Clone, Copy)]
 enum UiAction {
-    StartGame,
-    RequestNewGame,
+    OpenLoadSaves,
+    OpenNewSave,
+    CloseSaveDialog,
+    StartNewWorldInSlot(usize),
     ConfirmNewGame,
     CancelNewGame,
     ResumeGame,
@@ -172,7 +201,7 @@ enum UiAction {
     ToggleAdaptiveSync,
     ToggleHdr,
     SaveGame,
-    LoadGame,
+    LoadSaveSlot(usize),
     SelectHotbar(usize),
 }
 
@@ -195,10 +224,16 @@ impl Plugin for UiPlugin {
         app.init_resource::<DebugEnabled>()
             .init_resource::<DraggedBlock>()
             .init_resource::<SaveStatus>()
-            .init_resource::<NewGameConfirmation>()
+            .init_resource::<SaveFlow>()
             .add_systems(Startup, setup_ui)
-            .add_systems(OnEnter(GameState::MainMenu), update_main_menu_game_buttons)
-            .add_systems(Update, update_new_game_confirmation_visibility)
+            .add_systems(
+                Update,
+                (
+                    update_save_slot_labels,
+                    update_new_game_confirmation_visibility,
+                    update_save_slot_dialog_visibility,
+                ),
+            )
             .add_systems(
                 Update,
                 (
@@ -234,10 +269,11 @@ fn setup_ui(
     settings: Res<GameSettings>,
 ) {
     let icons = create_block_icons(&mut images);
-    let has_saved_game = load_from_disk().is_ok();
     commands.insert_resource(icons.clone());
-    setup_main_menu(&mut commands, &icons, has_saved_game);
+    setup_main_menu(&mut commands, &icons);
     setup_new_game_confirmation(&mut commands);
+    setup_save_slot_dialog(&mut commands, SaveDialogKind::Load);
+    setup_save_slot_dialog(&mut commands, SaveDialogKind::New);
     setup_options_menu(&mut commands, &settings);
     setup_pause_menu(&mut commands);
     setup_inventory(&mut commands, &icons, &hotbar);
@@ -330,7 +366,7 @@ fn create_screen(
     panel.expect("screen panel is created with its root")
 }
 
-fn setup_main_menu(commands: &mut Commands, icons: &BlockIconAssets, has_saved_game: bool) {
+fn setup_main_menu(commands: &mut Commands, icons: &BlockIconAssets) {
     let panel = create_screen(
         commands,
         GameState::MainMenu,
@@ -425,37 +461,23 @@ fn setup_main_menu(commands: &mut Commands, icons: &BlockIconAssets, has_saved_g
                     },
                     BackgroundColor(ACCENT_COLOR),
                 ));
-                add_main_menu_button(
+                add_button(
                     menu,
-                    if has_saved_game {
-                        "Resume Game"
-                    } else {
-                        "Start New World"
-                    },
-                    if has_saved_game {
-                        UiAction::LoadGame
-                    } else {
-                        UiAction::StartGame
-                    },
+                    "Load a World",
+                    UiAction::OpenLoadSaves,
                     370.0,
                     54.0,
-                    MainMenuButtonRole::Primary,
+                    None,
+                    None,
                 );
-                add_main_menu_button(
+                add_button(
                     menu,
-                    if has_saved_game {
-                        "Start New World"
-                    } else {
-                        "Load Saved World"
-                    },
-                    if has_saved_game {
-                        UiAction::RequestNewGame
-                    } else {
-                        UiAction::LoadGame
-                    },
+                    "Start a New World",
+                    UiAction::OpenNewSave,
                     370.0,
                     50.0,
-                    MainMenuButtonRole::Secondary,
+                    None,
+                    None,
                 );
                 add_button(
                     menu,
@@ -517,12 +539,16 @@ fn setup_new_game_confirmation(commands: &mut Commands) {
                 ))
                 .with_children(|dialog| {
                     add_label(dialog, "Start a new world?", 24.0, TEXT_COLOR);
-                    add_label(
-                        dialog,
-                        "Your saved world will be replaced when you return to the main menu.",
-                        15.0,
-                        MUTED_TEXT_COLOR,
-                    );
+                    dialog.spawn((
+                        Text::new(""),
+                        TextFont {
+                            font_size: FontSize::Px(15.0),
+                            ..default()
+                        },
+                        TextColor(MUTED_TEXT_COLOR),
+                        TextLayout::justify(Justify::Center),
+                        NewGameConfirmMessage,
+                    ));
                     add_button(
                         dialog,
                         "Confirm New Game",
@@ -543,6 +569,113 @@ fn setup_new_game_confirmation(commands: &mut Commands) {
                     );
                 });
         });
+}
+
+fn setup_save_slot_dialog(commands: &mut Commands, kind: SaveDialogKind) {
+    let (title, description) = match kind {
+        SaveDialogKind::Load => ("LOAD A WORLD", "Choose one of your saved worlds."),
+        SaveDialogKind::New => (
+            "START A NEW WORLD",
+            "Choose an empty slot, or replace a saved world.",
+        ),
+    };
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Percent(0.0),
+                right: Val::Percent(0.0),
+                top: Val::Percent(0.0),
+                bottom: Val::Percent(0.0),
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.72)),
+            Visibility::Hidden,
+            GlobalZIndex(100),
+            SaveSlotDialogRoot(kind),
+        ))
+        .with_children(|overlay| {
+            overlay
+                .spawn((
+                    Node {
+                        width: Val::Px(520.0),
+                        max_width: Val::Percent(90.0),
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Center,
+                        row_gap: Val::Px(14.0),
+                        padding: UiRect::all(Val::Px(30.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        border_radius: BorderRadius::all(Val::Px(16.0)),
+                        ..default()
+                    },
+                    BackgroundColor(CARD_COLOR),
+                    BorderColor::all(SOFT_BORDER),
+                ))
+                .with_children(|dialog| {
+                    add_label(dialog, title, 24.0, TEXT_COLOR);
+                    add_label(dialog, description, 15.0, MUTED_TEXT_COLOR);
+                    for slot in 1..=MAX_SAVE_SLOTS {
+                        add_save_slot_button(dialog, slot, kind);
+                    }
+                    add_button(
+                        dialog,
+                        "Back",
+                        UiAction::CloseSaveDialog,
+                        340.0,
+                        46.0,
+                        None,
+                        None,
+                    );
+                });
+        });
+}
+
+fn add_save_slot_button(parent: &mut ChildSpawnerCommands<'_>, slot: usize, kind: SaveDialogKind) {
+    let action = match kind {
+        SaveDialogKind::Load => UiAction::LoadSaveSlot(slot),
+        SaveDialogKind::New => UiAction::StartNewWorldInSlot(slot),
+    };
+    let label = format!("Save Slot {slot}");
+    let mut button = parent.spawn((
+        Button,
+        Hovered::default(),
+        MenuButtonAction(action),
+        ButtonPalette {
+            idle: BUTTON_COLOR,
+            hover: BUTTON_HOVER_COLOR,
+            pressed: BUTTON_PRESSED_COLOR,
+        },
+        Node {
+            width: Val::Px(390.0),
+            height: Val::Px(48.0),
+            align_self: AlignSelf::Center,
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            border: UiRect::all(Val::Px(1.0)),
+            border_radius: BorderRadius::all(Val::Px(10.0)),
+            ..default()
+        },
+        BorderColor::all(Color::srgba(0.78, 0.86, 0.66, 0.23)),
+        BackgroundColor(BUTTON_COLOR),
+    ));
+    button.with_children(|button| {
+        button.spawn((
+            Text::new(label),
+            TextFont {
+                font_size: FontSize::Px(17.0),
+                ..default()
+            },
+            TextColor(TEXT_COLOR),
+            TextLayout::justify(Justify::Center),
+            Pickable::IGNORE,
+            SaveSlotLabel { slot, kind },
+        ));
+    });
+    button.observe(on_menu_action);
 }
 
 fn setup_options_menu(commands: &mut Commands, settings: &GameSettings) {
@@ -891,7 +1024,7 @@ fn add_graphics_slider(
                             Pickable::IGNORE,
                         ));
                     });
-            });
+                });
         });
 }
 
@@ -1370,33 +1503,34 @@ fn add_badge(parent: &mut ChildSpawnerCommands<'_>, label: &str, accent: bool) {
 }
 
 fn add_save_status_label(parent: &mut ChildSpawnerCommands<'_>) {
-    parent.spawn((
-        Node {
-            width: Val::Percent(100.0),
-            min_height: Val::Px(22.0),
-            flex_direction: FlexDirection::Row,
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            ..default()
-        },
-        BackgroundColor(Color::NONE),
-    ))
-    .with_children(|label| {
-        label.spawn((
-            Text::new(""),
-            TextFont {
-                font_size: FontSize::Px(14.0),
-                ..default()
-            },
-            TextColor(MUTED_TEXT_COLOR),
-            TextLayout::justify(Justify::Center),
+    parent
+        .spawn((
             Node {
-                max_width: Val::Percent(100.0),
+                width: Val::Percent(100.0),
+                min_height: Val::Px(22.0),
+                flex_direction: FlexDirection::Row,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
                 ..default()
             },
-            SaveStatusLabel,
-        ));
-    });
+            BackgroundColor(Color::NONE),
+        ))
+        .with_children(|label| {
+            label.spawn((
+                Text::new(""),
+                TextFont {
+                    font_size: FontSize::Px(14.0),
+                    ..default()
+                },
+                TextColor(MUTED_TEXT_COLOR),
+                TextLayout::justify(Justify::Center),
+                Node {
+                    max_width: Val::Percent(100.0),
+                    ..default()
+                },
+                SaveStatusLabel,
+            ));
+        });
 }
 
 fn add_button(
@@ -1408,27 +1542,7 @@ fn add_button(
     tint: Option<Color>,
     hotbar_slot: Option<usize>,
 ) {
-    add_button_with_role(
-        parent,
-        label,
-        action,
-        width,
-        height,
-        tint,
-        hotbar_slot,
-        None,
-    );
-}
-
-fn add_main_menu_button(
-    parent: &mut ChildSpawnerCommands<'_>,
-    label: &str,
-    action: UiAction,
-    width: f32,
-    height: f32,
-    role: MainMenuButtonRole,
-) {
-    add_button_with_role(parent, label, action, width, height, None, None, Some(role));
+    add_button_with_role(parent, label, action, width, height, tint, hotbar_slot);
 }
 
 fn add_button_with_role(
@@ -1439,12 +1553,8 @@ fn add_button_with_role(
     height: f32,
     tint: Option<Color>,
     hotbar_slot: Option<usize>,
-    main_menu_role: Option<MainMenuButtonRole>,
 ) {
-    let palette = if matches!(main_menu_role, Some(MainMenuButtonRole::Primary))
-        || (main_menu_role.is_none()
-            && matches!(action, UiAction::StartGame | UiAction::ResumeGame))
-    {
+    let palette = if matches!(action, UiAction::ResumeGame | UiAction::OpenLoadSaves) {
         ButtonPalette {
             idle: ACCENT_BUTTON_COLOR,
             hover: ACCENT_BUTTON_HOVER,
@@ -1508,9 +1618,6 @@ fn add_button_with_role(
     }
     if let Some(slot) = hotbar_slot {
         button.insert(HotbarSlot(slot));
-    }
-    if let Some(role) = main_menu_role {
-        button.insert(role);
     }
     button.observe(on_menu_action);
 }
@@ -1688,7 +1795,7 @@ fn on_menu_action(
     player: Query<(&Transform, &PlayerLook), With<Player>>,
     mut pending_player_restore: ResMut<PendingPlayerRestore>,
     mut save_status: ResMut<SaveStatus>,
-    mut new_game_confirmation: ResMut<NewGameConfirmation>,
+    mut save_flow: ResMut<SaveFlow>,
     mut primary_window: Query<&mut Window, With<PrimaryWindow>>,
     primary_monitor: Query<&Monitor, With<PrimaryMonitor>>,
     mut app_exit: MessageWriter<AppExit>,
@@ -1697,17 +1804,27 @@ fn on_menu_action(
         return;
     };
     match *action {
-        UiAction::StartGame => {
-            settings.prepare_new_world_seed();
-            next_state.set(GameState::Playing);
+        UiAction::OpenLoadSaves => save_flow.dialog = Some(SaveDialogKind::Load),
+        UiAction::OpenNewSave => save_flow.dialog = Some(SaveDialogKind::New),
+        UiAction::CloseSaveDialog => save_flow.dialog = None,
+        UiAction::StartNewWorldInSlot(slot) => {
+            save_flow.dialog = None;
+            if save_slot_exists(slot) {
+                save_flow.confirmation = Some(slot);
+            } else {
+                save_flow.current_slot = slot;
+                settings.prepare_new_world_seed();
+                next_state.set(GameState::Playing);
+            }
         }
-        UiAction::RequestNewGame => new_game_confirmation.0 = true,
         UiAction::ConfirmNewGame => {
-            new_game_confirmation.0 = false;
-            settings.prepare_new_world_seed();
-            next_state.set(GameState::Playing);
+            if let Some(slot) = save_flow.confirmation.take() {
+                save_flow.current_slot = slot;
+                settings.prepare_new_world_seed();
+                next_state.set(GameState::Playing);
+            }
         }
-        UiAction::CancelNewGame => new_game_confirmation.0 = false,
+        UiAction::CancelNewGame => save_flow.confirmation = None,
         UiAction::ResumeGame => next_state.set(GameState::Playing),
         UiAction::OpenMainOptions => {
             options_return.0 = GameState::MainMenu;
@@ -1719,12 +1836,18 @@ fn on_menu_action(
         }
         UiAction::BackFromOptions => next_state.set(options_return.0),
         UiAction::ReturnToMainMenu => {
-            new_game_confirmation.0 = false;
+            save_flow.confirmation = None;
+            save_flow.dialog = None;
             save_status.0 = match player.single() {
                 Ok((player, look)) => {
                     let save = SaveFile::capture(&world, player, &hotbar, look.flying);
-                    match save_to_disk(&save) {
-                        Ok(()) => "Game saved automatically.".to_owned(),
+                    match save_to_disk(save_flow.current_slot, &save) {
+                        Ok(()) => {
+                            format!(
+                                "Game saved automatically to Slot {}.",
+                                save_flow.current_slot
+                            )
+                        }
                         Err(error) => format!("Automatic save failed: {error}"),
                     }
                 }
@@ -1768,35 +1891,37 @@ fn on_menu_action(
                 return;
             };
             let save = SaveFile::capture(&world, player, &hotbar, look.flying);
-            save_status.0 = match save_to_disk(&save) {
-                Ok(()) => "Game saved.".to_owned(),
+            save_status.0 = match save_to_disk(save_flow.current_slot, &save) {
+                Ok(()) => format!("Game saved to Slot {}.", save_flow.current_slot),
                 Err(error) => format!("Save failed: {error}"),
             };
         }
-        UiAction::LoadGame => match load_from_disk() {
-            Ok(save) => {
-                let Ok(hotbar_blocks) = save.decoded_hotbar() else {
-                    save_status.0 = "Save contains invalid hotbar data.".to_owned();
-                    return;
-                };
-                let Ok(edits) = save.decoded_edits() else {
-                    save_status.0 = "Save contains invalid block data.".to_owned();
-                    return;
-                };
-                settings.seed = save.terrain_seed;
-                world.restore_saved_world(save.terrain_seed, edits);
-                hotbar.slots = hotbar_blocks;
-                hotbar.selected = save.hotbar_selected;
-                pending_player_restore.0 = Some((
-                    save.player_position,
-                    save.player_rotation,
-                    save.was_flying,
-                ));
-                save_status.0 = format!("Loaded world seed {}.", save.terrain_seed);
-                next_state.set(GameState::Playing);
+        UiAction::LoadSaveSlot(slot) => {
+            save_flow.dialog = None;
+            match load_from_disk(slot) {
+                Ok(save) => {
+                    let Ok(hotbar_blocks) = save.decoded_hotbar() else {
+                        save_status.0 = "Save contains invalid hotbar data.".to_owned();
+                        return;
+                    };
+                    let Ok(edits) = save.decoded_edits() else {
+                        save_status.0 = "Save contains invalid block data.".to_owned();
+                        return;
+                    };
+                    save_flow.current_slot = slot;
+                    settings.seed = save.terrain_seed;
+                    world.restore_saved_world(save.terrain_seed, edits);
+                    hotbar.slots = hotbar_blocks;
+                    hotbar.selected = save.hotbar_selected;
+                    pending_player_restore.0 =
+                        Some((save.player_position, save.player_rotation, save.was_flying));
+                    save_status.0 =
+                        format!("Loaded Slot {} (world seed {}).", slot, save.terrain_seed);
+                    next_state.set(GameState::Playing);
+                }
+                Err(error) => save_status.0 = error,
             }
-            Err(error) => save_status.0 = error,
-        },
+        }
         UiAction::SelectHotbar(slot) => {
             if *state.get() == GameState::Inventory
                 && let Some(block) = dragged.0.take()
@@ -2361,14 +2486,40 @@ fn update_save_status(
 }
 
 fn update_new_game_confirmation_visibility(
-    confirmation: Res<NewGameConfirmation>,
+    save_flow: Res<SaveFlow>,
     mut dialogs: Query<&mut Visibility, With<NewGameConfirmDialog>>,
+    mut messages: Query<&mut Text, With<NewGameConfirmMessage>>,
 ) {
-    if !confirmation.is_changed() {
+    if !save_flow.is_changed() {
         return;
     }
     for mut visibility in &mut dialogs {
-        *visibility = if confirmation.0 {
+        *visibility = if save_flow.confirmation.is_some() {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+    }
+    if let Some(slot) = save_flow.confirmation {
+        for mut message in &mut messages {
+            message.0 = format!("Starting this world will replace the saved world in Slot {slot}.");
+        }
+    } else {
+        for mut message in &mut messages {
+            message.0.clear();
+        }
+    }
+}
+
+fn update_save_slot_dialog_visibility(
+    save_flow: Res<SaveFlow>,
+    mut roots: Query<(&SaveSlotDialogRoot, &mut Visibility)>,
+) {
+    if !save_flow.is_changed() {
+        return;
+    }
+    for (root, mut visibility) in &mut roots {
+        *visibility = if save_flow.dialog == Some(root.0) {
             Visibility::Visible
         } else {
             Visibility::Hidden
@@ -2376,26 +2527,46 @@ fn update_new_game_confirmation_visibility(
     }
 }
 
-fn update_main_menu_game_buttons(
-    mut buttons: Query<(Entity, &MainMenuButtonRole, &mut MenuButtonAction)>,
-    children: Query<&Children>,
-    mut labels: Query<&mut Text>,
+fn update_save_slot_labels(
+    state: Res<State<GameState>>,
+    save_flow: Res<SaveFlow>,
+    mut initialized: Local<bool>,
+    mut labels: Query<(&SaveSlotLabel, &mut Text)>,
 ) {
-    let has_saved_game = load_from_disk().is_ok();
-    for (entity, role, mut action) in &mut buttons {
-        let (label, next_action) = match (has_saved_game, role) {
-            (true, MainMenuButtonRole::Primary) => ("Resume Game", UiAction::LoadGame),
-            (true, MainMenuButtonRole::Secondary) => ("Start New World", UiAction::RequestNewGame),
-            (false, MainMenuButtonRole::Primary) => ("Start New World", UiAction::StartGame),
-            (false, MainMenuButtonRole::Secondary) => ("Load Saved World", UiAction::LoadGame),
-        };
-        action.0 = next_action;
-        for descendant in children.iter_descendants(entity) {
-            if let Ok(mut text) = labels.get_mut(descendant) {
-                text.0 = label.to_owned();
-                break;
+    if *state.get() != GameState::MainMenu {
+        return;
+    }
+    if *initialized && !state.is_changed() && !save_flow.is_changed() {
+        return;
+    }
+    *initialized = true;
+
+    for (label, mut text) in &mut labels {
+        let exists = save_slot_exists(label.slot);
+        text.0 = match (label.kind, load_from_disk(label.slot)) {
+            (SaveDialogKind::Load, Ok(save)) => {
+                format!(
+                    "Slot {}  ·  Saved  ·  Seed {}",
+                    label.slot, save.terrain_seed
+                )
             }
-        }
+            (SaveDialogKind::Load, Err(_)) if exists => {
+                format!("Slot {}  ·  Save file found (unreadable)", label.slot)
+            }
+            (SaveDialogKind::Load, Err(_)) => {
+                format!("Slot {}  ·  Empty (no save file)", label.slot)
+            }
+            (SaveDialogKind::New, Ok(save)) => format!(
+                "Slot {}  ·  Replace saved world · Seed {}",
+                label.slot, save.terrain_seed
+            ),
+            (SaveDialogKind::New, Err(_)) if exists => {
+                format!("Slot {}  ·  Replace unreadable save", label.slot)
+            }
+            (SaveDialogKind::New, Err(_)) => {
+                format!("Slot {}  ·  Empty (no save file)", label.slot)
+            }
+        };
     }
 }
 
