@@ -57,6 +57,9 @@ pub fn raycast_blocks(
     reach: f32,
     world: &WorldData,
 ) -> Option<RayHit> {
+    if reach < 0.0 {
+        return None;
+    }
     let direction = direction.normalize_or_zero();
     if direction == Vec3::ZERO {
         return None;
@@ -335,6 +338,14 @@ fn draw_selection(selection: Res<Selection>, mut gizmos: Gizmos) {
 mod tests {
     use super::*;
     use crate::world::WorldData;
+
+    #[test]
+    fn negative_reach_does_not_select_origin_block() {
+        let mut world = WorldData::new(23_041, 8);
+        world.overrides.insert(IVec3::new(0, 20, 0), Block::Stone);
+
+        assert!(raycast_blocks(Vec3::new(0.5, 20.5, 0.5), Vec3::X, -1.0, &world).is_none());
+    }
 
     #[test]
     fn raycast_finds_solid_block_and_stops_at_reach() {
