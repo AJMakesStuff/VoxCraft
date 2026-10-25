@@ -25,7 +25,7 @@ Render distance is measured in horizontal chunks and is clamped to 2–16. Mouse
 
 | Input | Action |
 | --- | --- |
-| Main menu | Start Game, load a saved game, open Options, or Quit |
+| Main menu | Resume a saved game or start a new world (with confirmation before replacing a save), open Options, or Quit |
 | W / A / S / D | Move |
 | Mouse | Look |
 | Mouse wheel | Cycle through hotbar slots |
@@ -39,7 +39,7 @@ Render distance is measured in horizontal chunks and is clamped to 2–16. Mouse
 | Right mouse | Place selected block; oak logs align to the face you place against |
 | 1–5 | Select a hotbar slot |
 | E | Open or close the block picker; click or drag blocks onto hotbar slots |
-| Escape | Open the pause menu; save, resume, change options, or return to the main menu |
+| Escape | Open the pause menu; save, resume, change options, or return to the main menu (which automatically saves) |
 | Options | Adjust mouse sensitivity, display mode/resolution, FOV, render distance, anti-aliasing, V-Sync/adaptive presentation, brightness, contrast, gamma, and HDR rendering |
 | F3 | Toggle coordinates and chunk debug information |
 
@@ -53,9 +53,9 @@ Render distance is measured in horizontal chunks and is clamped to 2–16. Mouse
 
 Graphics options apply immediately. Adaptive V-Sync uses the backend's adaptive presentation mode when available; G-Sync and FreeSync remain controlled by the graphics driver. The HDR option enables Bevy's higher-precision camera rendering path, but Bevy does not currently provide HDR output to the monitor.
 
-Chunk generation and mesh assembly run on Bevy's async compute pool; completed meshes are uploaded in a paced main-thread queue. Returning to the main menu unloads terrain, cancels pending chunk work, clears edits, and resets the player spawn. Blocks use a generated 16 × 16 pixel texture atlas with nearest-neighbor sampling and vertex colors for face shading, so the project has no external asset downloads or copyrighted game assets.
+Chunk generation and mesh assembly run on Bevy's async compute pool; completed meshes are uploaded in a paced main-thread queue. Returning to the main menu saves the current game before unloading terrain, cancelling pending chunk work, clearing edits, and resetting the player spawn. Blocks use a generated 16 × 16 pixel texture atlas with nearest-neighbor sampling and vertex colors for face shading; placement and breaking effects are synthesized in code, so the project has no external asset downloads or copyrighted game assets.
 
-The pause menu saves one local world slot, including its terrain seed, block edits, player position and view direction, and hotbar. Loading regenerates the terrain from that saved seed, so the landscape is the same each time; saved block edits are reapplied afterward. The main menu loads that save. Mouse sensitivity is stored separately and saved whenever it changes. On Windows, these files are stored at `%APPDATA%\VoxCraft\save.json` and `%APPDATA%\VoxCraft\settings.json`.
+The game saves one local world slot when you choose Save Game in the pause menu or return to the main menu. The save includes its terrain seed, block edits, player position and view direction, and hotbar. Loading regenerates the terrain from that saved seed, so the landscape is the same each time; saved block edits are reapplied afterward. The main menu loads that save. Mouse sensitivity is stored separately and saved whenever it changes. On Windows, these files are stored at `%APPDATA%\VoxCraft\save.json` and `%APPDATA%\VoxCraft\settings.json`.
 
 ## Checks
 

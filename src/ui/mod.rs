@@ -127,6 +127,12 @@ struct CalibrationSwatch(f32);
 struct SaveStatusLabel;
 
 #[derive(Component)]
+struct NewGameConfirmDialog;
+
+#[derive(Resource, Default)]
+struct NewGameConfirmation(bool);
+
+#[derive(Component)]
 struct ButtonTint(Color);
 
 #[derive(Component, Clone, Copy)]
@@ -139,9 +145,18 @@ struct ButtonPalette {
 #[derive(Component, Clone, Copy)]
 struct MenuButtonAction(UiAction);
 
+#[derive(Component, Clone, Copy)]
+enum MainMenuButtonRole {
+    Primary,
+    Secondary,
+}
+
 #[derive(Clone, Copy)]
 enum UiAction {
     StartGame,
+    RequestNewGame,
+    ConfirmNewGame,
+    CancelNewGame,
     ResumeGame,
     OpenMainOptions,
     OpenPauseOptions,
@@ -180,7 +195,10 @@ impl Plugin for UiPlugin {
         app.init_resource::<DebugEnabled>()
             .init_resource::<DraggedBlock>()
             .init_resource::<SaveStatus>()
+            .init_resource::<NewGameConfirmation>()
             .add_systems(Startup, setup_ui)
+            .add_systems(OnEnter(GameState::MainMenu), update_main_menu_game_buttons)
+            .add_systems(Update, update_new_game_confirmation_visibility)
             .add_systems(
                 Update,
                 (
@@ -212,8 +230,10 @@ impl Plugin for UiPlugin {
 
 fn setup_ui(mut commands: Commands, mut images: ResMut<Assets<Image>>, hotbar: Res<Hotbar>) {
     let icons = create_block_icons(&mut images);
+    let has_saved_game = load_from_disk().is_ok();
     commands.insert_resource(icons.clone());
-    setup_main_menu(&mut commands, &icons);
+    setup_main_menu(&mut commands, &icons, has_saved_game);
+    setup_new_game_confirmation(&mut commands);
     setup_options_menu(&mut commands);
     setup_pause_menu(&mut commands);
     setup_inventory(&mut commands, &icons, &hotbar);
@@ -306,7 +326,7 @@ fn create_screen(
     panel.expect("screen panel is created with its root")
 }
 
-fn setup_main_menu(commands: &mut Commands, icons: &BlockIconAssets) {
+fn setup_main_menu(commands: &mut Commands, icons: &BlockIconAssets, has_saved_game: bool) {
     let panel = create_screen(
         commands,
         GameState::MainMenu,
@@ -399,23 +419,37 @@ fn setup_main_menu(commands: &mut Commands, icons: &BlockIconAssets) {
                     },
                     BackgroundColor(ACCENT_COLOR),
                 ));
-                add_button(
+                add_main_menu_button(
                     menu,
-                    "Start New World",
-                    UiAction::StartGame,
+                    if has_saved_game {
+                        "Resume Game"
+                    } else {
+                        "Start New World"
+                    },
+                    if has_saved_game {
+                        UiAction::LoadGame
+                    } else {
+                        UiAction::StartGame
+                    },
                     370.0,
                     54.0,
-                    None,
-                    None,
+                    MainMenuButtonRole::Primary,
                 );
-                add_button(
+                add_main_menu_button(
                     menu,
-                    "Load Saved World",
-                    UiAction::LoadGame,
+                    if has_saved_game {
+                        "Start New World"
+                    } else {
+                        "Load Saved World"
+                    },
+                    if has_saved_game {
+                        UiAction::RequestNewGame
+                    } else {
+                        UiAction::LoadGame
+                    },
                     370.0,
                     50.0,
-                    None,
-                    None,
+                    MainMenuButtonRole::Secondary,
                 );
                 add_button(
                     menu,
@@ -436,6 +470,73 @@ fn setup_main_menu(commands: &mut Commands, icons: &BlockIconAssets) {
                 );
             });
     });
+}
+
+fn setup_new_game_confirmation(commands: &mut Commands) {
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Percent(0.0),
+                right: Val::Percent(0.0),
+                top: Val::Percent(0.0),
+                bottom: Val::Percent(0.0),
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.72)),
+            Visibility::Hidden,
+            GlobalZIndex(100),
+            NewGameConfirmDialog,
+        ))
+        .with_children(|overlay| {
+            overlay
+                .spawn((
+                    Node {
+                        width: Val::Px(500.0),
+                        max_width: Val::Percent(90.0),
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Center,
+                        row_gap: Val::Px(16.0),
+                        padding: UiRect::all(Val::Px(30.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        border_radius: BorderRadius::all(Val::Px(16.0)),
+                        ..default()
+                    },
+                    BackgroundColor(CARD_COLOR),
+                    BorderColor::all(SOFT_BORDER),
+                ))
+                .with_children(|dialog| {
+                    add_label(dialog, "Start a new world?", 24.0, TEXT_COLOR);
+                    add_label(
+                        dialog,
+                        "Your saved world will be replaced when you return to the main menu.",
+                        15.0,
+                        MUTED_TEXT_COLOR,
+                    );
+                    add_button(
+                        dialog,
+                        "Confirm New Game",
+                        UiAction::ConfirmNewGame,
+                        340.0,
+                        48.0,
+                        Some(DANGER_BUTTON_COLOR),
+                        None,
+                    );
+                    add_button(
+                        dialog,
+                        "Keep Saved Game",
+                        UiAction::CancelNewGame,
+                        340.0,
+                        48.0,
+                        None,
+                        None,
+                    );
+                });
+        });
 }
 
 fn setup_options_menu(commands: &mut Commands) {
@@ -1282,22 +1383,61 @@ fn add_button(
     tint: Option<Color>,
     hotbar_slot: Option<usize>,
 ) {
-    let palette = match action {
-        UiAction::StartGame | UiAction::ResumeGame => ButtonPalette {
+    add_button_with_role(
+        parent,
+        label,
+        action,
+        width,
+        height,
+        tint,
+        hotbar_slot,
+        None,
+    );
+}
+
+fn add_main_menu_button(
+    parent: &mut ChildSpawnerCommands<'_>,
+    label: &str,
+    action: UiAction,
+    width: f32,
+    height: f32,
+    role: MainMenuButtonRole,
+) {
+    add_button_with_role(parent, label, action, width, height, None, None, Some(role));
+}
+
+fn add_button_with_role(
+    parent: &mut ChildSpawnerCommands<'_>,
+    label: &str,
+    action: UiAction,
+    width: f32,
+    height: f32,
+    tint: Option<Color>,
+    hotbar_slot: Option<usize>,
+    main_menu_role: Option<MainMenuButtonRole>,
+) {
+    let palette = if matches!(main_menu_role, Some(MainMenuButtonRole::Primary))
+        || (main_menu_role.is_none()
+            && matches!(action, UiAction::StartGame | UiAction::ResumeGame))
+    {
+        ButtonPalette {
             idle: ACCENT_BUTTON_COLOR,
             hover: ACCENT_BUTTON_HOVER,
             pressed: ACCENT_BUTTON_PRESSED,
-        },
-        UiAction::Quit | UiAction::ReturnToMainMenu => ButtonPalette {
-            idle: DANGER_BUTTON_COLOR,
-            hover: DANGER_BUTTON_HOVER,
-            pressed: DANGER_BUTTON_PRESSED,
-        },
-        _ => ButtonPalette {
-            idle: tint.unwrap_or(BUTTON_COLOR),
-            hover: tint.unwrap_or(BUTTON_HOVER_COLOR),
-            pressed: tint.unwrap_or(BUTTON_PRESSED_COLOR),
-        },
+        }
+    } else {
+        match action {
+            UiAction::Quit | UiAction::ReturnToMainMenu => ButtonPalette {
+                idle: DANGER_BUTTON_COLOR,
+                hover: DANGER_BUTTON_HOVER,
+                pressed: DANGER_BUTTON_PRESSED,
+            },
+            _ => ButtonPalette {
+                idle: tint.unwrap_or(BUTTON_COLOR),
+                hover: tint.unwrap_or(BUTTON_HOVER_COLOR),
+                pressed: tint.unwrap_or(BUTTON_PRESSED_COLOR),
+            },
+        }
     };
     let mut button = parent.spawn((
         Button,
@@ -1343,6 +1483,9 @@ fn add_button(
     }
     if let Some(slot) = hotbar_slot {
         button.insert(HotbarSlot(slot));
+    }
+    if let Some(role) = main_menu_role {
+        button.insert(role);
     }
     button.observe(on_menu_action);
 }
@@ -1520,6 +1663,7 @@ fn on_menu_action(
     player: Query<&Transform, With<Player>>,
     mut pending_player_restore: ResMut<PendingPlayerRestore>,
     mut save_status: ResMut<SaveStatus>,
+    mut new_game_confirmation: ResMut<NewGameConfirmation>,
     mut primary_window: Query<&mut Window, With<PrimaryWindow>>,
     primary_monitor: Query<&Monitor, With<PrimaryMonitor>>,
     mut app_exit: MessageWriter<AppExit>,
@@ -1532,6 +1676,13 @@ fn on_menu_action(
             settings.prepare_new_world_seed();
             next_state.set(GameState::Playing);
         }
+        UiAction::RequestNewGame => new_game_confirmation.0 = true,
+        UiAction::ConfirmNewGame => {
+            new_game_confirmation.0 = false;
+            settings.prepare_new_world_seed();
+            next_state.set(GameState::Playing);
+        }
+        UiAction::CancelNewGame => new_game_confirmation.0 = false,
         UiAction::ResumeGame => next_state.set(GameState::Playing),
         UiAction::OpenMainOptions => {
             options_return.0 = GameState::MainMenu;
@@ -1542,7 +1693,20 @@ fn on_menu_action(
             next_state.set(GameState::Options);
         }
         UiAction::BackFromOptions => next_state.set(options_return.0),
-        UiAction::ReturnToMainMenu => next_state.set(GameState::MainMenu),
+        UiAction::ReturnToMainMenu => {
+            new_game_confirmation.0 = false;
+            save_status.0 = match player.single() {
+                Ok(player) => {
+                    let save = SaveFile::capture(&world, player, &hotbar);
+                    match save_to_disk(&save) {
+                        Ok(()) => "Game saved automatically.".to_owned(),
+                        Err(error) => format!("Automatic save failed: {error}"),
+                    }
+                }
+                Err(_) => "Automatic save failed: could not find the player.".to_owned(),
+            };
+            next_state.set(GameState::MainMenu);
+        }
         UiAction::Quit => {
             app_exit.write(AppExit::Success);
         }
@@ -2143,6 +2307,45 @@ fn update_save_status(
     }
     for mut text in &mut labels {
         text.0.clone_from(&status.0);
+    }
+}
+
+fn update_new_game_confirmation_visibility(
+    confirmation: Res<NewGameConfirmation>,
+    mut dialogs: Query<&mut Visibility, With<NewGameConfirmDialog>>,
+) {
+    if !confirmation.is_changed() {
+        return;
+    }
+    for mut visibility in &mut dialogs {
+        *visibility = if confirmation.0 {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+    }
+}
+
+fn update_main_menu_game_buttons(
+    mut buttons: Query<(Entity, &MainMenuButtonRole, &mut MenuButtonAction)>,
+    children: Query<&Children>,
+    mut labels: Query<&mut Text>,
+) {
+    let has_saved_game = load_from_disk().is_ok();
+    for (entity, role, mut action) in &mut buttons {
+        let (label, next_action) = match (has_saved_game, role) {
+            (true, MainMenuButtonRole::Primary) => ("Resume Game", UiAction::LoadGame),
+            (true, MainMenuButtonRole::Secondary) => ("Start New World", UiAction::RequestNewGame),
+            (false, MainMenuButtonRole::Primary) => ("Start New World", UiAction::StartGame),
+            (false, MainMenuButtonRole::Secondary) => ("Load Saved World", UiAction::LoadGame),
+        };
+        action.0 = next_action;
+        for descendant in children.iter_descendants(entity) {
+            if let Ok(mut text) = labels.get_mut(descendant) {
+                text.0 = label.to_owned();
+                break;
+            }
+        }
     }
 }
 

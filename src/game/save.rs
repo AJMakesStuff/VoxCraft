@@ -15,7 +15,7 @@ pub struct SaveStatus(pub String);
 
 impl Default for SaveStatus {
     fn default() -> Self {
-        Self("Save from the pause menu, then load it here.".to_owned())
+        Self("Your world saves automatically when you return to the main menu.".to_owned())
     }
 }
 
@@ -127,7 +127,7 @@ pub fn load_from_disk() -> Result<SaveFile, String> {
     let path = save_file_path();
     let json = fs::read_to_string(path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
-            "No save found yet. Save a game from the pause menu first.".to_owned()
+            "No save found yet. Start and return from a game to create one.".to_owned()
         } else {
             format!("Could not read save: {error}")
         }

@@ -15,6 +15,7 @@ use super::particles::{
     BlockParticleAssets, clear_block_particles, setup_block_particle_assets, spawn_block_particles,
     update_block_particles,
 };
+use super::sounds::{BlockSounds, play_block_sound, setup_block_sounds};
 
 const REACH: f32 = 5.0;
 
@@ -34,7 +35,7 @@ impl Plugin for InteractionPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Selection>()
             .init_resource::<Hotbar>()
-            .add_systems(Startup, setup_block_particle_assets)
+            .add_systems(Startup, (setup_block_particle_assets, setup_block_sounds))
             .add_systems(OnEnter(GameState::MainMenu), clear_block_particles)
             .add_systems(
                 Update,
@@ -224,6 +225,7 @@ struct BlockEditParams<'w, 's> {
     commands: Commands<'w, 's>,
     meshes: ResMut<'w, Assets<Mesh>>,
     material: Res<'w, WorldMaterial>,
+    sounds: Res<'w, BlockSounds>,
 }
 
 fn edit_block(params: BlockEditParams) {
@@ -238,6 +240,7 @@ fn edit_block(params: BlockEditParams) {
         mut commands,
         mut meshes,
         material,
+        sounds,
     } = params;
     if *state.get() != GameState::Playing {
         return;
@@ -276,6 +279,9 @@ fn edit_block(params: BlockEditParams) {
     world.set_block(pos, block);
     if let Some((broken_pos, broken_block)) = broken {
         spawn_block_particles(&mut commands, broken_pos, broken_block, &particle_assets);
+        play_block_sound(&mut commands, sounds.breaking.clone());
+    } else {
+        play_block_sound(&mut commands, sounds.placement.clone());
     }
     let coord = ChunkCoord::from_world(pos);
     let mut affected = vec![coord];

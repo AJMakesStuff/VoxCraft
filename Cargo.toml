@@ -7,7 +7,7 @@ description = "VoxCraft, a procedural voxel sandbox built with Bevy"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-bevy = { version = "0.20", default-features = false, features = ["3d", "ui", "x11", "wayland"] }
+bevy = { version = "0.20", default-features = false, features = ["3d", "ui", "audio", "wav", "x11", "wayland"] }
 futures-lite = "2.6"
 noise = "0.9"
 serde = { version = "1.0", features = ["derive"] }
