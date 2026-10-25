@@ -7,8 +7,8 @@ use bevy::{
 };
 
 use super::{
-    Block, CHUNK_SIZE, ChunkCoord, ChunkData, TerrainNoise, WorldData,
     texture::{BLOCK_TEXTURE_COUNT, BLOCK_TEXTURE_SIZE},
+    Block, ChunkCoord, ChunkData, TerrainNoise, WorldData, CHUNK_SIZE,
 };
 
 #[derive(Debug, Default, PartialEq)]
@@ -112,7 +112,16 @@ fn build_chunk_mesh_using(
                     {
                         chunk.get(neighbor_local).is_solid()
                     } else {
-                        block_at_neighbor(origin + neighbor_local).is_solid()
+                        match (
+                            origin.x.checked_add(neighbor_local.x),
+                            origin.y.checked_add(neighbor_local.y),
+                            origin.z.checked_add(neighbor_local.z),
+                        ) {
+                            (Some(x), Some(y), Some(z)) => {
+                                block_at_neighbor(IVec3::new(x, y, z)).is_solid()
+                            }
+                            _ => false,
+                        }
                     };
                     if neighbor_is_solid {
                         continue;
@@ -180,6 +189,17 @@ mod tests {
     use super::*;
     use crate::world::manager::LoadedChunk;
     use crate::world::{Block, ChunkData};
+
+    #[test]
+    fn extreme_world_coordinate_mesh_does_not_overflow() {
+        let coord = ChunkCoord::from_world(IVec3::new(i32::MAX, 4, 4));
+        let mut chunk = ChunkData::default();
+        chunk.set(IVec3::new(15, 4, 4), Block::Stone);
+
+        let mesh = build_chunk_mesh_from_data(coord, &chunk, 11, &HashMap::new());
+
+        assert_eq!(mesh.indices.len(), 36);
+    }
 
     #[test]
     fn mesh_contains_only_exposed_faces() {
