@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use bevy::{
     asset::RenderAssetUsages,
+    ecs::system::SystemParam,
     image::ImageSampler,
     input::{ButtonState, keyboard::KeyboardInput},
     picking::Pickable,
@@ -53,6 +54,19 @@ const SOFT_BORDER: Color = Color::srgba(0.78, 0.86, 0.66, 0.16);
 
 #[derive(Component)]
 struct ScreenRoot(GameState);
+
+#[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
+enum OptionsMenuPage {
+    #[default]
+    Home,
+    Controls,
+    Display,
+    Graphics,
+    ColorAndSync,
+}
+
+#[derive(Component)]
+struct OptionsPageContent(OptionsMenuPage);
 
 #[derive(Component)]
 struct MainMenuActions;
@@ -230,6 +244,12 @@ struct ButtonPalette {
 #[derive(Component, Clone, Copy)]
 struct MenuButtonAction(UiAction);
 
+#[derive(SystemParam)]
+struct MenuActionInteraction<'w> {
+    state: Res<'w, State<GameState>>,
+    dragged: ResMut<'w, DraggedBlock>,
+}
+
 #[derive(Clone, Copy)]
 enum UiAction {
     OpenLoadSaves,
@@ -242,6 +262,8 @@ enum UiAction {
     ResumeGame,
     OpenMainOptions,
     OpenPauseOptions,
+    OpenOptionsPage(OptionsMenuPage),
+    BackToOptionsHome,
     BackFromOptions,
     ReturnToMainMenu,
     Quit,
@@ -278,6 +300,7 @@ pub struct UiPlugin;
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DebugEnabled>()
+            .init_resource::<OptionsMenuPage>()
             .init_resource::<DraggedBlock>()
             .init_resource::<SaveStatus>()
             .init_resource::<SaveFlow>()
@@ -291,6 +314,7 @@ impl Plugin for UiPlugin {
                     update_new_game_confirmation_visibility,
                     update_delete_world_confirmation_visibility,
                     update_save_slot_dialog_visibility,
+                    update_options_page_visibility,
                 ),
             )
             .add_systems(Update, update_save_name_keyboard)
@@ -1046,7 +1070,7 @@ fn setup_options_menu(commands: &mut Commands, settings: &GameSettings) {
         add_label(panel, "OPTIONS", 32.0, TEXT_COLOR);
         add_label(
             panel,
-            "Fine-tune controls, display, and image quality. Changes apply as you make them.",
+            "Choose a settings category. Changes apply as you make them.",
             14.0,
             MUTED_TEXT_COLOR,
         );
@@ -1063,6 +1087,62 @@ fn setup_options_menu(commands: &mut Commands, settings: &GameSettings) {
                 },
                 BackgroundColor(CARD_COLOR),
                 BorderColor::all(SOFT_BORDER),
+                OptionsPageContent(OptionsMenuPage::Home),
+            ))
+            .with_children(|section| {
+                add_section_title(section, "SETTINGS CATEGORIES");
+                add_button(
+                    section,
+                    "Controls",
+                    UiAction::OpenOptionsPage(OptionsMenuPage::Controls),
+                    520.0,
+                    46.0,
+                    None,
+                    None,
+                );
+                add_button(
+                    section,
+                    "Display & Camera",
+                    UiAction::OpenOptionsPage(OptionsMenuPage::Display),
+                    520.0,
+                    46.0,
+                    None,
+                    None,
+                );
+                add_button(
+                    section,
+                    "Graphics",
+                    UiAction::OpenOptionsPage(OptionsMenuPage::Graphics),
+                    520.0,
+                    46.0,
+                    None,
+                    None,
+                );
+                add_button(
+                    section,
+                    "Color & Sync",
+                    UiAction::OpenOptionsPage(OptionsMenuPage::ColorAndSync),
+                    520.0,
+                    46.0,
+                    None,
+                    None,
+                );
+            });
+
+        panel
+            .spawn((
+                Node {
+                    width: Val::Percent(100.0),
+                    display: Display::None,
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(10.0),
+                    padding: UiRect::all(Val::Px(17.0)),
+                    border_radius: BorderRadius::all(Val::Px(12.0)),
+                    ..default()
+                },
+                BackgroundColor(CARD_COLOR),
+                BorderColor::all(SOFT_BORDER),
+                OptionsPageContent(OptionsMenuPage::Controls),
             ))
             .with_children(|section| {
                 add_section_title(section, "CONTROLS");
@@ -1096,12 +1176,14 @@ fn setup_options_menu(commands: &mut Commands, settings: &GameSettings) {
                     0.5,
                     1,
                 );
+                add_options_home_button(section);
             });
 
         panel
             .spawn((
                 Node {
                     width: Val::Percent(100.0),
+                    display: Display::None,
                     flex_direction: FlexDirection::Column,
                     row_gap: Val::Px(9.0),
                     padding: UiRect::all(Val::Px(17.0)),
@@ -1110,6 +1192,7 @@ fn setup_options_menu(commands: &mut Commands, settings: &GameSettings) {
                 },
                 BackgroundColor(CARD_ALT_COLOR),
                 BorderColor::all(SOFT_BORDER),
+                OptionsPageContent(OptionsMenuPage::Display),
             ))
             .with_children(|section| {
                 add_section_title(section, "DISPLAY & CAMERA");
@@ -1118,12 +1201,14 @@ fn setup_options_menu(commands: &mut Commands, settings: &GameSettings) {
                 add_panel_label(section, "Resolution", 13.0, MUTED_TEXT_COLOR);
                 add_graphics_stepper::<ResolutionReadout>(section, UiAction::ResolutionStep(-1), UiAction::ResolutionStep(1));
                 add_graphics_slider(section, "Field of view (deg)", GraphicsSliderKind::FieldOfView, 60.0, 120.0, 75.0, 1.0, 0);
+                add_options_home_button(section);
             });
 
         panel
             .spawn((
                 Node {
                     width: Val::Percent(100.0),
+                    display: Display::None,
                     flex_direction: FlexDirection::Column,
                     row_gap: Val::Px(9.0),
                     padding: UiRect::all(Val::Px(17.0)),
@@ -1132,19 +1217,22 @@ fn setup_options_menu(commands: &mut Commands, settings: &GameSettings) {
                 },
                 BackgroundColor(CARD_COLOR),
                 BorderColor::all(SOFT_BORDER),
+                OptionsPageContent(OptionsMenuPage::Graphics),
             ))
             .with_children(|section| {
-                add_section_title(section, "WORLD DETAIL");
+                add_section_title(section, "GRAPHICS");
                 add_panel_label(section, "Render distance", 13.0, MUTED_TEXT_COLOR);
                 add_graphics_stepper::<RenderDistanceReadout>(section, UiAction::RenderDistanceStep(-1), UiAction::RenderDistanceStep(1));
                 add_panel_label(section, "Anti-aliasing", 13.0, MUTED_TEXT_COLOR);
                 add_graphics_stepper::<AntiAliasingReadout>(section, UiAction::AntiAliasingStep(-1), UiAction::AntiAliasingStep(1));
+                add_options_home_button(section);
             });
 
         panel
             .spawn((
                 Node {
                     width: Val::Percent(100.0),
+                    display: Display::None,
                     flex_direction: FlexDirection::Column,
                     row_gap: Val::Px(9.0),
                     padding: UiRect::all(Val::Px(17.0)),
@@ -1153,9 +1241,10 @@ fn setup_options_menu(commands: &mut Commands, settings: &GameSettings) {
                 },
                 BackgroundColor(CARD_ALT_COLOR),
                 BorderColor::all(SOFT_BORDER),
+                OptionsPageContent(OptionsMenuPage::ColorAndSync),
             ))
             .with_children(|section| {
-                add_section_title(section, "SYNC & COLOR");
+                add_section_title(section, "COLOR & SYNC");
                 section
                     .spawn((
                         Node {
@@ -1179,6 +1268,7 @@ fn setup_options_menu(commands: &mut Commands, settings: &GameSettings) {
                 add_calibration_pattern(section);
                 add_button(section, "HDR Rendering: Off", UiAction::ToggleHdr, 520.0, 42.0, None, None);
                 add_panel_label(section, "Uses a higher precision camera buffer. Direct HDR monitor output is not currently supported by Bevy.", 12.0, MUTED_TEXT_COLOR);
+                add_options_home_button(section);
             });
 
         add_button(
@@ -1197,6 +1287,18 @@ fn setup_options_menu(commands: &mut Commands, settings: &GameSettings) {
             MUTED_TEXT_COLOR,
         );
     });
+}
+
+fn add_options_home_button(parent: &mut ChildSpawnerCommands<'_>) {
+    add_button(
+        parent,
+        "Back to categories",
+        UiAction::BackToOptionsHome,
+        260.0,
+        42.0,
+        None,
+        None,
+    );
 }
 
 fn add_graphics_stepper<T: Component + Default>(
@@ -2169,10 +2271,10 @@ fn on_menu_action(
     actions: Query<&MenuButtonAction>,
     mut next_state: ResMut<NextState<GameState>>,
     mut options_return: ResMut<OptionsReturn>,
+    mut options_page: ResMut<OptionsMenuPage>,
     mut settings: ResMut<GameSettings>,
     mut hotbar: ResMut<Hotbar>,
-    state: Res<State<GameState>>,
-    mut dragged: ResMut<DraggedBlock>,
+    mut interaction: MenuActionInteraction,
     mut world: ResMut<WorldData>,
     player: Query<(&Transform, &PlayerLook), With<Player>>,
     mut pending_player_restore: ResMut<PendingPlayerRestore>,
@@ -2245,12 +2347,16 @@ fn on_menu_action(
         UiAction::ResumeGame => next_state.set(GameState::Playing),
         UiAction::OpenMainOptions => {
             options_return.0 = GameState::MainMenu;
+            *options_page = OptionsMenuPage::Home;
             next_state.set(GameState::Options);
         }
         UiAction::OpenPauseOptions => {
             options_return.0 = GameState::Paused;
+            *options_page = OptionsMenuPage::Home;
             next_state.set(GameState::Options);
         }
+        UiAction::OpenOptionsPage(page) => *options_page = page,
+        UiAction::BackToOptionsHome => *options_page = OptionsMenuPage::Home,
         UiAction::BackFromOptions => next_state.set(options_return.0),
         UiAction::ReturnToMainMenu => {
             save_flow.name_dialog = None;
@@ -2379,8 +2485,8 @@ fn on_menu_action(
         }
         UiAction::CancelDeleteSave => save_flow.delete_confirmation = None,
         UiAction::SelectHotbar(slot) => {
-            if *state.get() == GameState::Inventory
-                && let Some(block) = dragged.0.take()
+            if *interaction.state.get() == GameState::Inventory
+                && let Some(block) = interaction.dragged.0.take()
             {
                 hotbar.replace_slot(slot, block);
             }
@@ -2482,6 +2588,25 @@ fn update_screen_visibility(
         } else {
             Visibility::Hidden
         };
+    }
+}
+
+fn update_options_page_visibility(
+    page: Res<OptionsMenuPage>,
+    mut content: Query<(&OptionsPageContent, &mut Node)>,
+) {
+    if !page.is_changed() {
+        return;
+    }
+    for (content_page, mut node) in &mut content {
+        let display = if content_page.0 == *page {
+            Display::Flex
+        } else {
+            Display::None
+        };
+        if node.display != display {
+            node.display = display;
+        }
     }
 }
 
