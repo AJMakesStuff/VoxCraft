@@ -129,16 +129,16 @@ pub fn raycast_blocks(
             });
         }
         previous = cell;
-        if max.x < max.y && max.x < max.z {
-            distance = max.x;
+        distance = max.x.min(max.y).min(max.z);
+        if max.x == distance {
             cell.x += step.x;
             max.x += delta.x;
-        } else if max.y < max.z {
-            distance = max.y;
+        }
+        if max.y == distance {
             cell.y += step.y;
             max.y += delta.y;
-        } else {
-            distance = max.z;
+        }
+        if max.z == distance {
             cell.z += step.z;
             max.z += delta.z;
         }
@@ -335,6 +335,29 @@ fn draw_selection(selection: Res<Selection>, mut gizmos: Gizmos) {
 mod tests {
     use super::*;
     use crate::world::WorldData;
+
+    #[test]
+    fn exact_corner_crossing_skips_edge_touching_voxel() {
+        let mut world = WorldData::new(23_041, 8);
+        let origin = IVec3::new(0, 100, 0);
+        let edge_touching = IVec3::new(1, 100, 0);
+        let other_edge_touching = IVec3::new(0, 101, 0);
+        let diagonal = IVec3::new(1, 101, 0);
+        world.overrides.insert(origin, Block::Air);
+        world.overrides.insert(edge_touching, Block::Stone);
+        world.overrides.insert(other_edge_touching, Block::Stone);
+        world.overrides.insert(diagonal, Block::Stone);
+
+        let hit = raycast_blocks(
+            Vec3::new(0.5, 100.5, 0.5),
+            Vec3::new(1.0, 1.0, 0.0),
+            5.0,
+            &world,
+        )
+        .unwrap();
+
+        assert_eq!(hit.block, diagonal);
+    }
 
     #[test]
     fn raycast_finds_solid_block_and_stops_at_reach() {
