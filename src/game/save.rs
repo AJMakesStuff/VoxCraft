@@ -10,6 +10,7 @@ use crate::{
 
 const SAVE_VERSION: u32 = 1;
 pub const MAX_SAVE_SLOTS: usize = 3;
+pub const MAX_SAVE_NAME_CHARS: usize = 24;
 
 pub const DEFAULT_MOUSE_SENSITIVITY: f32 = 0.0022;
 pub const MIN_MOUSE_SENSITIVITY: f32 = 0.0001;
@@ -32,6 +33,8 @@ impl Default for SaveStatus {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SaveFile {
     version: u32,
+    #[serde(default)]
+    pub name: String,
     #[serde(alias = "seed")]
     pub terrain_seed: u32,
     pub player_position: [f32; 3],
@@ -73,6 +76,7 @@ impl SaveFile {
         player: &Transform,
         hotbar: &Hotbar,
         was_flying: bool,
+        name: String,
     ) -> Self {
         let mut edits: Vec<_> = world
             .overrides
@@ -86,6 +90,7 @@ impl SaveFile {
 
         Self {
             version: SAVE_VERSION,
+            name,
             terrain_seed: world.seed,
             player_position: player.translation.to_array(),
             player_rotation: player.rotation.to_array(),
@@ -116,6 +121,14 @@ impl SaveFile {
     }
 
     fn validate(&self) -> Result<(), String> {
+        if self.name.trim().is_empty()
+            || self.name.chars().count() > MAX_SAVE_NAME_CHARS
+            || self.name.chars().any(char::is_control)
+        {
+            return Err(format!(
+                "Save name must contain 1 to {MAX_SAVE_NAME_CHARS} printable characters."
+            ));
+        }
         if self.version != SAVE_VERSION {
             return Err(format!(
                 "This save uses version {}, but VoxCraft supports version {}.",
@@ -170,10 +183,31 @@ pub fn load_from_disk(slot: usize) -> Result<SaveFile, String> {
             format!("Could not read save: {error}")
         }
     })?;
-    let save: SaveFile = serde_json::from_str(&json)
+    let mut save: SaveFile = serde_json::from_str(&json)
         .map_err(|error| format!("Save file could not be read: {error}"))?;
+    save.name = normalize_save_name(&save.name, slot);
     save.validate()?;
     Ok(save)
+}
+
+pub fn default_save_name(slot: usize) -> String {
+    format!("World {slot}")
+}
+
+pub fn normalize_save_name(name: &str, slot: usize) -> String {
+    let normalized: String = name
+        .trim()
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(MAX_SAVE_NAME_CHARS)
+        .collect::<String>()
+        .trim()
+        .to_owned();
+    if normalized.is_empty() {
+        default_save_name(slot)
+    } else {
+        normalized
+    }
 }
 
 pub fn save_slot_exists(slot: usize) -> bool {
@@ -182,6 +216,27 @@ pub fn save_slot_exists(slot: usize) -> bool {
     }
     save_file_path(slot).is_ok_and(|path| path.exists())
         || (slot == 1 && legacy_save_file_path().exists())
+}
+
+pub fn delete_save_slot(slot: usize) -> Result<(), String> {
+    let mut paths = vec![save_file_path(slot)?];
+    if slot == 1 {
+        paths.push(legacy_save_file_path());
+    }
+
+    let mut removed = false;
+    for path in paths {
+        match fs::remove_file(&path) {
+            Ok(()) => removed = true,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("Could not delete save file: {error}")),
+        }
+    }
+    if removed {
+        Ok(())
+    } else {
+        Err(format!("Save slot {slot} is empty."))
+    }
 }
 
 pub fn load_mouse_sensitivity() -> Option<f32> {
