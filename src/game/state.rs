@@ -78,7 +78,7 @@ impl GameSettings {
             } else if let Some(value) = arg.strip_prefix("--mouse-sensitivity=")
                 && let Ok(sensitivity) = value.parse::<f32>()
             {
-                settings.mouse_sensitivity = sensitivity.clamp(0.0001, 0.02);
+                settings.mouse_sensitivity = clamp_mouse_sensitivity(sensitivity);
             }
         }
         settings
@@ -128,6 +128,14 @@ impl GameSettings {
     }
 }
 
+fn clamp_mouse_sensitivity(sensitivity: f32) -> f32 {
+    if sensitivity.is_finite() {
+        sensitivity.clamp(0.0001, 0.02)
+    } else {
+        0.0022
+    }
+}
+
 fn fresh_seed() -> u32 {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let time = SystemTime::now()
@@ -170,5 +178,16 @@ impl Plugin for GamePlugin {
                 InteractionPlugin,
                 UiPlugin,
             ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn mouse_sensitivity_nan_is_clamped_to_a_finite_value() {
+        let sensitivity = super::clamp_mouse_sensitivity("NaN".parse::<f32>().unwrap());
+
+        assert!(sensitivity.is_finite());
+        assert!((0.0001..=0.02).contains(&sensitivity));
     }
 }
