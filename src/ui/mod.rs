@@ -29,13 +29,22 @@ use crate::{
     world::{Block, CHUNK_SIZE, WorldData, block_texture_pixel_for_face},
 };
 
-const PANEL_COLOR: Color = Color::srgba(0.055, 0.075, 0.085, 0.96);
-const BUTTON_COLOR: Color = Color::srgb(0.16, 0.22, 0.23);
-const BUTTON_HOVER_COLOR: Color = Color::srgb(0.22, 0.30, 0.30);
-const BUTTON_PRESSED_COLOR: Color = Color::srgb(0.30, 0.39, 0.36);
-const HOTBAR_SELECTED_COLOR: Color = Color::srgb(0.35, 0.46, 0.38);
-const TEXT_COLOR: Color = Color::srgb(0.91, 0.93, 0.88);
-const MUTED_TEXT_COLOR: Color = Color::srgb(0.68, 0.75, 0.72);
+const PANEL_COLOR: Color = Color::srgb(0.075, 0.095, 0.09);
+const CARD_COLOR: Color = Color::srgb(0.105, 0.13, 0.12);
+const CARD_ALT_COLOR: Color = Color::srgb(0.085, 0.11, 0.105);
+const BUTTON_COLOR: Color = Color::srgb(0.15, 0.19, 0.17);
+const BUTTON_HOVER_COLOR: Color = Color::srgb(0.22, 0.28, 0.23);
+const BUTTON_PRESSED_COLOR: Color = Color::srgb(0.28, 0.36, 0.28);
+const ACCENT_COLOR: Color = Color::srgb(0.64, 0.79, 0.47);
+const ACCENT_BUTTON_COLOR: Color = Color::srgb(0.30, 0.43, 0.27);
+const ACCENT_BUTTON_HOVER: Color = Color::srgb(0.39, 0.54, 0.33);
+const ACCENT_BUTTON_PRESSED: Color = Color::srgb(0.24, 0.35, 0.22);
+const DANGER_BUTTON_COLOR: Color = Color::srgb(0.36, 0.18, 0.16);
+const DANGER_BUTTON_HOVER: Color = Color::srgb(0.48, 0.23, 0.20);
+const DANGER_BUTTON_PRESSED: Color = Color::srgb(0.29, 0.14, 0.13);
+const TEXT_COLOR: Color = Color::srgb(0.94, 0.94, 0.86);
+const MUTED_TEXT_COLOR: Color = Color::srgb(0.66, 0.72, 0.65);
+const SOFT_BORDER: Color = Color::srgba(0.78, 0.86, 0.66, 0.16);
 
 #[derive(Component)]
 struct ScreenRoot(GameState);
@@ -121,6 +130,13 @@ struct SaveStatusLabel;
 struct ButtonTint(Color);
 
 #[derive(Component, Clone, Copy)]
+struct ButtonPalette {
+    idle: Color,
+    hover: Color,
+    pressed: Color,
+}
+
+#[derive(Component, Clone, Copy)]
 struct MenuButtonAction(UiAction);
 
 #[derive(Clone, Copy)]
@@ -197,7 +213,7 @@ impl Plugin for UiPlugin {
 fn setup_ui(mut commands: Commands, mut images: ResMut<Assets<Image>>, hotbar: Res<Hotbar>) {
     let icons = create_block_icons(&mut images);
     commands.insert_resource(icons.clone());
-    setup_main_menu(&mut commands);
+    setup_main_menu(&mut commands, &icons);
     setup_options_menu(&mut commands);
     setup_pause_menu(&mut commands);
     setup_inventory(&mut commands, &icons, &hotbar);
@@ -213,6 +229,7 @@ fn create_screen(
     panel_width: f32,
 ) -> Entity {
     let scrollable = state == GameState::Options;
+    let split_layout = matches!(state, GameState::MainMenu | GameState::Paused);
     let root = commands
         .spawn((
             Node {
@@ -228,6 +245,10 @@ fn create_screen(
                 ..default()
             },
             BackgroundColor(backdrop),
+            BackgroundGradient::from(LinearGradient::to_top(vec![
+                Color::srgba(0.07, 0.14, 0.10, 0.56).into(),
+                Color::srgba(0.015, 0.03, 0.035, 0.86).into(),
+            ])),
             ScreenRoot(state),
             Visibility::Hidden,
             GlobalZIndex(20),
@@ -251,15 +272,31 @@ fn create_screen(
                     Overflow::visible()
                 },
                 scrollbar_width: if scrollable { 10.0 } else { 0.0 },
-                flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Center,
-                row_gap: Val::Px(12.0),
-                padding: UiRect::all(Val::Px(28.0)),
+                flex_direction: if split_layout {
+                    FlexDirection::Row
+                } else {
+                    FlexDirection::Column
+                },
+                align_items: if split_layout {
+                    AlignItems::Stretch
+                } else {
+                    AlignItems::Center
+                },
+                row_gap: Val::Px(if split_layout { 0.0 } else { 14.0 }),
+                padding: UiRect::all(Val::Px(if split_layout { 0.0 } else { 30.0 })),
                 border: UiRect::all(Val::Px(1.0)),
+                border_radius: BorderRadius::all(Val::Px(20.0)),
                 ..default()
             },
             BackgroundColor(PANEL_COLOR),
-            BorderColor::all(Color::srgba(0.69, 0.78, 0.73, 0.24)),
+            BorderColor::all(SOFT_BORDER),
+            BoxShadow::new(
+                Color::srgba(0.0, 0.0, 0.0, 0.58),
+                Val::Px(0.0),
+                Val::Px(18.0),
+                Val::Px(1.0),
+                Val::Px(34.0),
+            ),
         ));
         if scrollable {
             menu_panel.insert(ScrollArea);
@@ -269,62 +306,135 @@ fn create_screen(
     panel.expect("screen panel is created with its root")
 }
 
-fn setup_main_menu(commands: &mut Commands) {
+fn setup_main_menu(commands: &mut Commands, icons: &BlockIconAssets) {
     let panel = create_screen(
         commands,
         GameState::MainMenu,
-        Color::srgba(0.015, 0.025, 0.032, 0.94),
-        440.0,
+        Color::srgba(0.015, 0.025, 0.032, 0.92),
+        900.0,
     );
     commands.entity(panel).with_children(|panel| {
-        add_label(panel, "VOXCRAFT", 38.0, TEXT_COLOR);
-        add_label(
-            panel,
-            "A quiet world of blocks, hills, and open sky",
-            16.0,
-            MUTED_TEXT_COLOR,
-        );
-        add_button(
-            panel,
-            "Start Game",
-            UiAction::StartGame,
-            340.0,
-            50.0,
-            None,
-            None,
-        );
-        add_button(
-            panel,
-            "Load Game",
-            UiAction::LoadGame,
-            340.0,
-            50.0,
-            None,
-            None,
-        );
-        add_button(
-            panel,
-            "Options",
-            UiAction::OpenMainOptions,
-            340.0,
-            50.0,
-            None,
-            None,
-        );
-        add_button(panel, "Quit", UiAction::Quit, 340.0, 50.0, None, None);
-        add_save_status_label(panel);
-        add_label(
-            panel,
-            "WASD move  |  Space jump  |  Mouse look",
-            14.0,
-            MUTED_TEXT_COLOR,
-        );
-        add_label(
-            panel,
-            "Double-tap Space to fly  |  Ctrl descends and lands",
-            14.0,
-            MUTED_TEXT_COLOR,
-        );
+        panel
+            .spawn((
+                Node {
+                    width: Val::Percent(39.0),
+                    min_width: Val::Px(230.0),
+                    flex_direction: FlexDirection::Column,
+                    justify_content: JustifyContent::SpaceBetween,
+                    align_items: AlignItems::FlexStart,
+                    padding: UiRect::all(Val::Px(32.0)),
+                    row_gap: Val::Px(22.0),
+                    border_radius: BorderRadius::new(
+                        Val::Px(19.0),
+                        Val::ZERO,
+                        Val::ZERO,
+                        Val::Px(19.0),
+                    ),
+                    ..default()
+                },
+                BackgroundColor(Color::srgb(0.105, 0.16, 0.12)),
+            ))
+            .with_children(|hero| {
+                add_badge(hero, "VOXEL SANDBOX", true);
+                hero.spawn((
+                    ImageNode::new(icons.get(Block::Grass)),
+                    Node {
+                        width: Val::Px(122.0),
+                        height: Val::Px(122.0),
+                        align_self: AlignSelf::Center,
+                        margin: UiRect::vertical(Val::Px(10.0)),
+                        ..default()
+                    },
+                    Pickable::IGNORE,
+                ));
+                hero.spawn((
+                    Node {
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(7.0),
+                        ..default()
+                    },
+                    BackgroundColor(Color::NONE),
+                ))
+                .with_children(|brand| {
+                    add_label(brand, "VOXCRAFT", 37.0, TEXT_COLOR);
+                    add_label(brand, "Find a hill. Make it home.", 15.0, MUTED_TEXT_COLOR);
+                });
+                add_label(hero, "EXPLORE  |  BUILD  |  FLY", 11.0, ACCENT_COLOR);
+            });
+
+        panel
+            .spawn((
+                Node {
+                    width: Val::Percent(61.0),
+                    flex_direction: FlexDirection::Column,
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::FlexStart,
+                    row_gap: Val::Px(13.0),
+                    padding: UiRect::all(Val::Px(38.0)),
+                    border_radius: BorderRadius::new(
+                        Val::ZERO,
+                        Val::Px(19.0),
+                        Val::Px(19.0),
+                        Val::ZERO,
+                    ),
+                    ..default()
+                },
+                BackgroundColor(PANEL_COLOR),
+            ))
+            .with_children(|menu| {
+                add_label(menu, "YOUR WORLD AWAITS", 25.0, TEXT_COLOR);
+                add_label(
+                    menu,
+                    "Start fresh or pick up where you left off.",
+                    14.0,
+                    MUTED_TEXT_COLOR,
+                );
+                menu.spawn((
+                    Node {
+                        width: Val::Px(44.0),
+                        height: Val::Px(3.0),
+                        margin: UiRect::vertical(Val::Px(6.0)),
+                        border_radius: BorderRadius::MAX,
+                        ..default()
+                    },
+                    BackgroundColor(ACCENT_COLOR),
+                ));
+                add_button(
+                    menu,
+                    "Start New World",
+                    UiAction::StartGame,
+                    370.0,
+                    54.0,
+                    None,
+                    None,
+                );
+                add_button(
+                    menu,
+                    "Load Saved World",
+                    UiAction::LoadGame,
+                    370.0,
+                    50.0,
+                    None,
+                    None,
+                );
+                add_button(
+                    menu,
+                    "Options",
+                    UiAction::OpenMainOptions,
+                    370.0,
+                    50.0,
+                    None,
+                    None,
+                );
+                add_button(menu, "Quit Game", UiAction::Quit, 370.0, 48.0, None, None);
+                add_save_status_label(menu);
+                add_label(
+                    menu,
+                    "WASD move    |    Space jump    |    Mouse look",
+                    12.0,
+                    MUTED_TEXT_COLOR,
+                );
+            });
     });
 }
 
@@ -336,176 +446,158 @@ fn setup_options_menu(commands: &mut Commands) {
         680.0,
     );
     commands.entity(panel).with_children(|panel| {
-        add_label(panel, "OPTIONS", 34.0, TEXT_COLOR);
+        add_badge(panel, "PERSONALIZE YOUR EXPERIENCE", true);
+        add_label(panel, "OPTIONS", 32.0, TEXT_COLOR);
         add_label(
             panel,
-            "Adjust mouse look speed. Changes apply immediately.",
-            16.0,
+            "Fine-tune controls, display, and image quality. Changes apply as you make them.",
+            14.0,
             MUTED_TEXT_COLOR,
         );
-        panel.spawn((
-            Text::new(""),
-            TextFont {
-                font_size: FontSize::Px(20.0),
-                ..default()
-            },
-            TextColor(TEXT_COLOR),
-            TextLayout::justify(Justify::Center),
-            Node {
-                width: Val::Percent(100.0),
-                min_height: Val::Px(42.0),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                ..default()
-            },
-            SensitivityReadout,
-        ));
+
         panel
             .spawn((
                 Node {
                     width: Val::Percent(100.0),
-                    flex_direction: FlexDirection::Row,
-                    justify_content: JustifyContent::Center,
-                    column_gap: Val::Px(12.0),
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(10.0),
+                    padding: UiRect::all(Val::Px(17.0)),
+                    border_radius: BorderRadius::all(Val::Px(12.0)),
                     ..default()
                 },
-                BackgroundColor(Color::NONE),
+                BackgroundColor(CARD_COLOR),
+                BorderColor::all(SOFT_BORDER),
             ))
-            .with_children(|row| {
-                add_button(
-                    row,
-                    "-",
-                    UiAction::SensitivityStep(-1),
-                    72.0,
-                    46.0,
-                    None,
-                    None,
-                );
-                add_button(
-                    row,
-                    "+",
-                    UiAction::SensitivityStep(1),
-                    72.0,
-                    46.0,
-                    None,
-                    None,
-                );
+            .with_children(|section| {
+                add_section_title(section, "CONTROLS");
+                add_left_label(section, "Mouse sensitivity", 13.0, MUTED_TEXT_COLOR);
+                section
+                    .spawn(Node {
+                        width: Val::Percent(100.0),
+                        min_height: Val::Px(32.0),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    })
+                    .with_children(|readout| {
+                        readout.spawn((
+                            Text::new(""),
+                            TextFont {
+                                font_size: FontSize::Px(18.0),
+                                ..default()
+                            },
+                            TextColor(TEXT_COLOR),
+                            TextLayout::justify(Justify::Center),
+                            SensitivityReadout,
+                            Pickable::IGNORE,
+                        ));
+                    });
+                section
+                    .spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            flex_direction: FlexDirection::Row,
+                            justify_content: JustifyContent::Center,
+                            column_gap: Val::Px(10.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::NONE),
+                    ))
+                    .with_children(|row| {
+                        add_button(row, "-", UiAction::SensitivityStep(-1), 76.0, 40.0, None, None);
+                        add_button(row, "+", UiAction::SensitivityStep(1), 76.0, 40.0, None, None);
+                    });
             });
-        add_label(panel, "GRAPHICS", 24.0, TEXT_COLOR);
-        add_label(panel, "DISPLAY", 16.0, MUTED_TEXT_COLOR);
-        add_label(panel, "Display Mode", 14.0, MUTED_TEXT_COLOR);
-        add_graphics_stepper::<DisplayModeReadout>(
-            panel,
-            UiAction::DisplayModeStep(-1),
-            UiAction::DisplayModeStep(1),
-        );
-        add_label(panel, "Resolution", 14.0, MUTED_TEXT_COLOR);
-        add_graphics_stepper::<ResolutionReadout>(
-            panel,
-            UiAction::ResolutionStep(-1),
-            UiAction::ResolutionStep(1),
-        );
-        add_graphics_slider(
-            panel,
-            "Field of View",
-            GraphicsSliderKind::FieldOfView,
-            60.0,
-            120.0,
-            75.0,
-            1.0,
-            0,
-        );
-        add_label(panel, "Render Distance", 14.0, MUTED_TEXT_COLOR);
-        add_graphics_stepper::<RenderDistanceReadout>(
-            panel,
-            UiAction::RenderDistanceStep(-1),
-            UiAction::RenderDistanceStep(1),
-        );
-        add_label(panel, "Anti-Aliasing", 14.0, MUTED_TEXT_COLOR);
-        add_graphics_stepper::<AntiAliasingReadout>(
-            panel,
-            UiAction::AntiAliasingStep(-1),
-            UiAction::AntiAliasingStep(1),
-        );
-        add_label(panel, "SYNC", 16.0, MUTED_TEXT_COLOR);
-        add_button(
-            panel,
-            "V-Sync: Off",
-            UiAction::ToggleVsync,
-            420.0,
-            44.0,
-            None,
-            None,
-        );
-        add_button(
-            panel,
-            "Adaptive V-Sync: Off",
-            UiAction::ToggleAdaptiveSync,
-            420.0,
-            44.0,
-            None,
-            None,
-        );
-        add_label(
-            panel,
-            "Adaptive presentation is used where supported. G-Sync / FreeSync is controlled by your display driver.",
-            13.0,
-            MUTED_TEXT_COLOR,
-        );
-        add_label(panel, "COLOR CALIBRATION", 16.0, MUTED_TEXT_COLOR);
-        add_graphics_slider(
-            panel,
-            "Brightness",
-            GraphicsSliderKind::Brightness,
-            0.5,
-            1.5,
-            1.0,
-            0.05,
-            2,
-        );
-        add_graphics_slider(
-            panel,
-            "Contrast",
-            GraphicsSliderKind::Contrast,
-            0.5,
-            1.5,
-            1.0,
-            0.05,
-            2,
-        );
-        add_graphics_slider(
-            panel,
-            "Gamma",
-            GraphicsSliderKind::Gamma,
-            0.5,
-            2.0,
-            1.0,
-            0.05,
-            2,
-        );
-        add_label(panel, "Live calibration pattern", 13.0, MUTED_TEXT_COLOR);
-        add_calibration_pattern(panel);
-        add_button(
-            panel,
-            "HDR Rendering: Off",
-            UiAction::ToggleHdr,
-            420.0,
-            44.0,
-            None,
-            None,
-        );
-        add_label(
-            panel,
-            "HDR rendering uses a higher precision camera buffer. Bevy does not currently output HDR to HDR monitors.",
-            13.0,
-            MUTED_TEXT_COLOR,
-        );
+
+        panel
+            .spawn((
+                Node {
+                    width: Val::Percent(100.0),
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(9.0),
+                    padding: UiRect::all(Val::Px(17.0)),
+                    border_radius: BorderRadius::all(Val::Px(12.0)),
+                    ..default()
+                },
+                BackgroundColor(CARD_ALT_COLOR),
+                BorderColor::all(SOFT_BORDER),
+            ))
+            .with_children(|section| {
+                add_section_title(section, "DISPLAY & CAMERA");
+                add_left_label(section, "Display mode", 13.0, MUTED_TEXT_COLOR);
+                add_graphics_stepper::<DisplayModeReadout>(section, UiAction::DisplayModeStep(-1), UiAction::DisplayModeStep(1));
+                add_left_label(section, "Resolution", 13.0, MUTED_TEXT_COLOR);
+                add_graphics_stepper::<ResolutionReadout>(section, UiAction::ResolutionStep(-1), UiAction::ResolutionStep(1));
+                add_graphics_slider(section, "Field of view (deg)", GraphicsSliderKind::FieldOfView, 60.0, 120.0, 75.0, 1.0, 0);
+            });
+
+        panel
+            .spawn((
+                Node {
+                    width: Val::Percent(100.0),
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(9.0),
+                    padding: UiRect::all(Val::Px(17.0)),
+                    border_radius: BorderRadius::all(Val::Px(12.0)),
+                    ..default()
+                },
+                BackgroundColor(CARD_COLOR),
+                BorderColor::all(SOFT_BORDER),
+            ))
+            .with_children(|section| {
+                add_section_title(section, "WORLD DETAIL");
+                add_left_label(section, "Render distance", 13.0, MUTED_TEXT_COLOR);
+                add_graphics_stepper::<RenderDistanceReadout>(section, UiAction::RenderDistanceStep(-1), UiAction::RenderDistanceStep(1));
+                add_left_label(section, "Anti-aliasing", 13.0, MUTED_TEXT_COLOR);
+                add_graphics_stepper::<AntiAliasingReadout>(section, UiAction::AntiAliasingStep(-1), UiAction::AntiAliasingStep(1));
+            });
+
+        panel
+            .spawn((
+                Node {
+                    width: Val::Percent(100.0),
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(9.0),
+                    padding: UiRect::all(Val::Px(17.0)),
+                    border_radius: BorderRadius::all(Val::Px(12.0)),
+                    ..default()
+                },
+                BackgroundColor(CARD_ALT_COLOR),
+                BorderColor::all(SOFT_BORDER),
+            ))
+            .with_children(|section| {
+                add_section_title(section, "SYNC & COLOR");
+                section
+                    .spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            flex_direction: FlexDirection::Row,
+                            justify_content: JustifyContent::Center,
+                            column_gap: Val::Px(10.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::NONE),
+                    ))
+                    .with_children(|row| {
+                        add_button(row, "V-Sync: Off", UiAction::ToggleVsync, 250.0, 42.0, None, None);
+                        add_button(row, "Adaptive: Off", UiAction::ToggleAdaptiveSync, 250.0, 42.0, None, None);
+                    });
+                add_left_label(section, "Adaptive presentation depends on your graphics backend; G-Sync / FreeSync are managed by the display driver.", 12.0, MUTED_TEXT_COLOR);
+                add_graphics_slider(section, "Brightness", GraphicsSliderKind::Brightness, 0.5, 1.5, 1.0, 0.05, 2);
+                add_graphics_slider(section, "Contrast", GraphicsSliderKind::Contrast, 0.5, 1.5, 1.0, 0.05, 2);
+                add_graphics_slider(section, "Gamma", GraphicsSliderKind::Gamma, 0.5, 2.0, 1.0, 0.05, 2);
+                add_left_label(section, "Live calibration preview", 12.0, MUTED_TEXT_COLOR);
+                add_calibration_pattern(section);
+                add_button(section, "HDR Rendering: Off", UiAction::ToggleHdr, 520.0, 42.0, None, None);
+                add_left_label(section, "Uses a higher precision camera buffer. Direct HDR monitor output is not currently supported by Bevy.", 12.0, MUTED_TEXT_COLOR);
+            });
+
         add_button(
             panel,
             "Back",
             UiAction::BackFromOptions,
-            420.0,
-            50.0,
+            260.0,
+            46.0,
             None,
             None,
         );
@@ -536,24 +628,33 @@ fn add_graphics_stepper<T: Component + Default>(
             BackgroundColor(Color::NONE),
         ))
         .with_children(|row| {
-            add_button(row, "−", decrease, 64.0, 42.0, None, None);
+            add_button(row, "-", decrease, 64.0, 42.0, None, None);
             row.spawn((
-                Text::new(""),
-                TextFont {
-                    font_size: FontSize::Px(16.0),
-                    ..default()
-                },
-                TextColor(TEXT_COLOR),
-                TextLayout::justify(Justify::Center),
                 Node {
                     width: Val::Px(270.0),
                     height: Val::Px(42.0),
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
+                    padding: UiRect::horizontal(Val::Px(8.0)),
+                    border_radius: BorderRadius::all(Val::Px(8.0)),
                     ..default()
                 },
-                T::default(),
-            ));
+                BackgroundColor(CARD_ALT_COLOR),
+                BorderColor::all(SOFT_BORDER),
+            ))
+            .with_children(|readout| {
+                readout.spawn((
+                    Text::new(""),
+                    TextFont {
+                        font_size: FontSize::Px(16.0),
+                        ..default()
+                    },
+                    TextColor(TEXT_COLOR),
+                    TextLayout::justify(Justify::Center),
+                    T::default(),
+                    Pickable::IGNORE,
+                ));
+            });
             add_button(row, "+", increase, 64.0, 42.0, None, None);
         });
 }
@@ -573,6 +674,7 @@ fn add_graphics_slider(
             Node {
                 width: Val::Percent(100.0),
                 flex_direction: FlexDirection::Row,
+                justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
                 column_gap: Val::Px(12.0),
                 ..default()
@@ -589,7 +691,7 @@ fn add_graphics_slider(
                 TextColor(MUTED_TEXT_COLOR),
                 TextLayout::no_wrap(),
                 Node {
-                    width: Val::Px(128.0),
+                    width: Val::Px(150.0),
                     ..default()
                 },
             ));
@@ -623,35 +725,60 @@ fn add_graphics_slider(
                     },
                     BackgroundColor(Color::srgb(0.045, 0.06, 0.065)),
                 ));
-                slider.spawn((
-                    SliderThumb,
-                    Node {
-                        width: Val::Px(14.0),
-                        height: Val::Px(20.0),
+                slider
+                    .spawn(Node {
+                        display: Display::Flex,
                         position_type: PositionType::Absolute,
-                        left: Val::Percent(0.0),
-                        top: Val::Px(3.0),
-                        border_radius: BorderRadius::all(Val::Px(3.0)),
+                        left: Val::Px(0.0),
+                        right: Val::Px(17.0),
+                        top: Val::Px(0.0),
+                        bottom: Val::Px(0.0),
                         ..default()
-                    },
-                    BackgroundColor(HOTBAR_SELECTED_COLOR),
-                ));
+                    })
+                    .with_children(|track| {
+                        track.spawn((
+                            SliderThumb,
+                            Node {
+                                width: Val::Px(17.0),
+                                height: Val::Px(17.0),
+                                position_type: PositionType::Absolute,
+                                left: Val::Percent(0.0),
+                                top: Val::Px(4.5),
+                                border_radius: BorderRadius::MAX,
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BackgroundColor(TEXT_COLOR),
+                            BorderColor::all(ACCENT_COLOR),
+                        ));
+                    });
             });
             row.spawn((
-                Text::new(""),
-                TextFont {
-                    font_size: FontSize::Px(14.0),
-                    ..default()
-                },
-                TextColor(TEXT_COLOR),
-                TextLayout::no_wrap().with_justify(Justify::Right),
                 Node {
                     width: Val::Px(56.0),
-                    justify_content: JustifyContent::FlexEnd,
+                    height: Val::Px(28.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    padding: UiRect::horizontal(Val::Px(6.0)),
+                    border_radius: BorderRadius::all(Val::Px(7.0)),
                     ..default()
                 },
-                GraphicsSliderReadout(kind),
-            ));
+                BackgroundColor(CARD_ALT_COLOR),
+                BorderColor::all(SOFT_BORDER),
+            ))
+            .with_children(|readout| {
+                readout.spawn((
+                    Text::new(""),
+                    TextFont {
+                        font_size: FontSize::Px(14.0),
+                        ..default()
+                    },
+                    TextColor(TEXT_COLOR),
+                    TextLayout::no_wrap().with_justify(Justify::Center),
+                    GraphicsSliderReadout(kind),
+                    Pickable::IGNORE,
+                ));
+            });
         });
 }
 
@@ -690,65 +817,120 @@ fn setup_pause_menu(commands: &mut Commands) {
         commands,
         GameState::Paused,
         Color::srgba(0.015, 0.025, 0.032, 0.82),
-        440.0,
+        760.0,
     );
     commands.entity(panel).with_children(|panel| {
-        add_label(panel, "PAUSED", 36.0, TEXT_COLOR);
-        add_label(
-            panel,
-            "The world is waiting for you.",
-            16.0,
-            MUTED_TEXT_COLOR,
-        );
-        add_button(
-            panel,
-            "Resume",
-            UiAction::ResumeGame,
-            340.0,
-            50.0,
-            None,
-            None,
-        );
-        add_button(
-            panel,
-            "Save Game",
-            UiAction::SaveGame,
-            340.0,
-            50.0,
-            None,
-            None,
-        );
-        add_button(
-            panel,
-            "Options",
-            UiAction::OpenPauseOptions,
-            340.0,
-            50.0,
-            None,
-            None,
-        );
-        add_save_status_label(panel);
-        add_button(
-            panel,
-            "Main Menu",
-            UiAction::ReturnToMainMenu,
-            340.0,
-            50.0,
-            None,
-            None,
-        );
-        add_label(
-            panel,
-            "Escape resumes, then E opens the block picker",
-            14.0,
-            MUTED_TEXT_COLOR,
-        );
-        add_label(
-            panel,
-            "Double-tap Space to fly  |  Ctrl descends and lands",
-            14.0,
-            MUTED_TEXT_COLOR,
-        );
+        panel
+            .spawn((
+                Node {
+                    width: Val::Percent(39.0),
+                    min_width: Val::Px(220.0),
+                    flex_direction: FlexDirection::Column,
+                    justify_content: JustifyContent::SpaceBetween,
+                    padding: UiRect::all(Val::Px(30.0)),
+                    row_gap: Val::Px(18.0),
+                    border_radius: BorderRadius::new(
+                        Val::Px(19.0),
+                        Val::ZERO,
+                        Val::ZERO,
+                        Val::Px(19.0),
+                    ),
+                    ..default()
+                },
+                BackgroundColor(Color::srgb(0.105, 0.16, 0.12)),
+            ))
+            .with_children(|sidebar| {
+                add_badge(sidebar, "WORLD PAUSED", true);
+                sidebar
+                    .spawn((
+                        Node {
+                            flex_direction: FlexDirection::Column,
+                            row_gap: Val::Px(8.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::NONE),
+                    ))
+                    .with_children(|copy| {
+                        add_label(copy, "Take a breather.", 24.0, TEXT_COLOR);
+                        add_label(
+                            copy,
+                            "Your world will be right here when you return.",
+                            14.0,
+                            MUTED_TEXT_COLOR,
+                        );
+                    });
+                add_label(
+                    sidebar,
+                    "ESC   RESUME   |   E   INVENTORY",
+                    12.0,
+                    ACCENT_COLOR,
+                );
+            });
+        panel
+            .spawn((
+                Node {
+                    width: Val::Percent(61.0),
+                    flex_direction: FlexDirection::Column,
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::FlexStart,
+                    row_gap: Val::Px(12.0),
+                    padding: UiRect::all(Val::Px(34.0)),
+                    border_radius: BorderRadius::new(
+                        Val::ZERO,
+                        Val::Px(19.0),
+                        Val::Px(19.0),
+                        Val::ZERO,
+                    ),
+                    ..default()
+                },
+                BackgroundColor(PANEL_COLOR),
+            ))
+            .with_children(|menu| {
+                add_label(menu, "PAUSE MENU", 23.0, TEXT_COLOR);
+                add_label(
+                    menu,
+                    "Choose what you would like to do.",
+                    14.0,
+                    MUTED_TEXT_COLOR,
+                );
+                add_button(
+                    menu,
+                    "Resume Game",
+                    UiAction::ResumeGame,
+                    360.0,
+                    52.0,
+                    None,
+                    None,
+                );
+                add_button(
+                    menu,
+                    "Save World",
+                    UiAction::SaveGame,
+                    360.0,
+                    48.0,
+                    None,
+                    None,
+                );
+                add_button(
+                    menu,
+                    "Options",
+                    UiAction::OpenPauseOptions,
+                    360.0,
+                    48.0,
+                    None,
+                    None,
+                );
+                add_save_status_label(menu);
+                add_button(
+                    menu,
+                    "Return to Main Menu",
+                    UiAction::ReturnToMainMenu,
+                    360.0,
+                    46.0,
+                    None,
+                    None,
+                );
+            });
     });
 }
 
@@ -757,10 +939,11 @@ fn setup_inventory(commands: &mut Commands, icons: &BlockIconAssets, hotbar: &Ho
         commands,
         GameState::Inventory,
         Color::srgba(0.015, 0.025, 0.032, 0.86),
-        620.0,
+        820.0,
     );
     commands.entity(panel).with_children(|panel| {
-        add_label(panel, "BLOCK PICKER", 34.0, TEXT_COLOR);
+        add_badge(panel, "YOUR BLOCK COLLECTION", true);
+        add_label(panel, "BLOCK PICKER", 30.0, TEXT_COLOR);
         panel.spawn((
             Text::new(""),
             TextFont {
@@ -771,7 +954,7 @@ fn setup_inventory(commands: &mut Commands, icons: &BlockIconAssets, hotbar: &Ho
             TextLayout::justify(Justify::Center),
             Node {
                 width: Val::Percent(100.0),
-                min_height: Val::Px(32.0),
+                min_height: Val::Px(28.0),
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
                 ..default()
@@ -785,8 +968,8 @@ fn setup_inventory(commands: &mut Commands, icons: &BlockIconAssets, hotbar: &Ho
                     flex_direction: FlexDirection::Row,
                     flex_wrap: FlexWrap::Wrap,
                     justify_content: JustifyContent::Center,
-                    column_gap: Val::Px(8.0),
-                    row_gap: Val::Px(8.0),
+                    column_gap: Val::Px(9.0),
+                    row_gap: Val::Px(9.0),
                     ..default()
                 },
                 BackgroundColor(Color::NONE),
@@ -796,7 +979,7 @@ fn setup_inventory(commands: &mut Commands, icons: &BlockIconAssets, hotbar: &Ho
                     add_block_picker_button(row, block, icons.get(block));
                 }
             });
-        add_label(panel, "HOTBAR", 16.0, MUTED_TEXT_COLOR);
+        add_label(panel, "HOTBAR LOADOUT", 14.0, ACCENT_COLOR);
         panel
             .spawn((
                 Node {
@@ -805,11 +988,12 @@ fn setup_inventory(commands: &mut Commands, icons: &BlockIconAssets, hotbar: &Ho
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
                     column_gap: Val::Px(4.0),
-                    padding: UiRect::all(Val::Px(5.0)),
+                    padding: UiRect::all(Val::Px(8.0)),
+                    border_radius: BorderRadius::all(Val::Px(12.0)),
                     ..default()
                 },
-                BackgroundColor(Color::srgba(0.025, 0.035, 0.04, 0.78)),
-                BorderColor::all(Color::srgba(0.8, 0.84, 0.77, 0.28)),
+                BackgroundColor(CARD_ALT_COLOR),
+                BorderColor::all(SOFT_BORDER),
             ))
             .with_children(|row| {
                 for (slot, block) in hotbar.slots.iter().copied().enumerate() {
@@ -827,8 +1011,8 @@ fn setup_inventory(commands: &mut Commands, icons: &BlockIconAssets, hotbar: &Ho
         );
         add_label(
             panel,
-            "Click or drag a block, then click or drag a hotbar slot. E or Escape closes the picker.",
-            14.0,
+            "Click a block to pick it up, then click a hotbar slot. Press E or Escape to close.",
+            13.0,
             MUTED_TEXT_COLOR,
         );
     });
@@ -846,10 +1030,11 @@ fn setup_inventory(commands: &mut Commands, icons: &BlockIconAssets, hotbar: &Ho
             left: Val::Px(0.0),
             top: Val::Px(0.0),
             padding: UiRect::axes(Val::Px(9.0), Val::Px(5.0)),
+            border_radius: BorderRadius::all(Val::Px(8.0)),
             ..default()
         },
-        BackgroundColor(PANEL_COLOR),
-        BorderColor::all(Color::srgba(0.75, 0.82, 0.76, 0.35)),
+        BackgroundColor(CARD_COLOR),
+        BorderColor::all(SOFT_BORDER),
         InventoryHoverTooltip,
         Pickable::IGNORE,
         Visibility::Hidden,
@@ -866,10 +1051,11 @@ fn setup_inventory(commands: &mut Commands, icons: &BlockIconAssets, hotbar: &Ho
             height: Val::Px(56.0),
             padding: UiRect::all(Val::Px(3.0)),
             border: UiRect::all(Val::Px(1.0)),
+            border_radius: BorderRadius::all(Val::Px(9.0)),
             ..default()
         },
-        BackgroundColor(PANEL_COLOR),
-        BorderColor::all(Color::srgba(0.85, 0.92, 0.86, 0.8)),
+        BackgroundColor(CARD_COLOR),
+        BorderColor::all(ACCENT_COLOR),
         InventoryDragPreview,
         Pickable::IGNORE,
         Visibility::Hidden,
@@ -920,10 +1106,11 @@ fn setup_hotbar(commands: &mut Commands, icons: &BlockIconAssets) {
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
                     padding: UiRect::axes(Val::Px(8.0), Val::Px(3.0)),
+                    border_radius: BorderRadius::all(Val::Px(10.0)),
                     ..default()
                 },
-                BackgroundColor(Color::srgba(0.025, 0.035, 0.04, 0.78)),
-                BorderColor::all(Color::srgba(0.8, 0.84, 0.77, 0.28)),
+                BackgroundColor(Color::srgba(0.035, 0.045, 0.04, 0.86)),
+                BorderColor::all(SOFT_BORDER),
                 HotbarSelectionPopup,
                 Visibility::Hidden,
             ));
@@ -934,10 +1121,11 @@ fn setup_hotbar(commands: &mut Commands, icons: &BlockIconAssets) {
                         justify_content: JustifyContent::Center,
                         column_gap: Val::Px(4.0),
                         padding: UiRect::all(Val::Px(5.0)),
+                        border_radius: BorderRadius::all(Val::Px(10.0)),
                         ..default()
                     },
-                    BackgroundColor(Color::srgba(0.025, 0.035, 0.04, 0.78)),
-                    BorderColor::all(Color::srgba(0.8, 0.84, 0.77, 0.28)),
+                    BackgroundColor(Color::srgba(0.035, 0.045, 0.04, 0.86)),
+                    BorderColor::all(SOFT_BORDER),
                 ))
                 .with_children(|row| {
                     for slot in 0..HOTBAR_SLOTS {
@@ -1011,6 +1199,60 @@ fn add_label(
     ));
 }
 
+fn add_left_label(
+    parent: &mut ChildSpawnerCommands<'_>,
+    text: impl Into<String>,
+    size: f32,
+    color: Color,
+) {
+    parent.spawn((
+        Text::new(text),
+        TextFont {
+            font_size: FontSize::Px(size),
+            ..default()
+        },
+        TextColor(color),
+        TextLayout::justify(Justify::Left),
+        Node {
+            width: Val::Percent(100.0),
+            ..default()
+        },
+    ));
+}
+
+fn add_section_title(parent: &mut ChildSpawnerCommands<'_>, title: &str) {
+    add_left_label(parent, title, 12.0, ACCENT_COLOR);
+}
+
+fn add_badge(parent: &mut ChildSpawnerCommands<'_>, label: &str, accent: bool) {
+    let (background, border, foreground) = if accent {
+        (
+            Color::srgba(0.64, 0.79, 0.47, 0.13),
+            Color::srgba(0.72, 0.88, 0.53, 0.34),
+            ACCENT_COLOR,
+        )
+    } else {
+        (CARD_COLOR, SOFT_BORDER, MUTED_TEXT_COLOR)
+    };
+    parent.spawn((
+        Node {
+            align_self: AlignSelf::FlexStart,
+            padding: UiRect::axes(Val::Px(12.0), Val::Px(7.0)),
+            border_radius: BorderRadius::MAX,
+            ..default()
+        },
+        BackgroundColor(background),
+        BorderColor::all(border),
+        Text::new(label),
+        TextFont {
+            font_size: FontSize::Px(10.0),
+            ..default()
+        },
+        TextColor(foreground),
+        TextLayout::no_wrap(),
+    ));
+}
+
 fn add_save_status_label(parent: &mut ChildSpawnerCommands<'_>) {
     parent.spawn((
         Text::new(""),
@@ -1040,42 +1282,67 @@ fn add_button(
     tint: Option<Color>,
     hotbar_slot: Option<usize>,
 ) {
+    let palette = match action {
+        UiAction::StartGame | UiAction::ResumeGame => ButtonPalette {
+            idle: ACCENT_BUTTON_COLOR,
+            hover: ACCENT_BUTTON_HOVER,
+            pressed: ACCENT_BUTTON_PRESSED,
+        },
+        UiAction::Quit | UiAction::ReturnToMainMenu => ButtonPalette {
+            idle: DANGER_BUTTON_COLOR,
+            hover: DANGER_BUTTON_HOVER,
+            pressed: DANGER_BUTTON_PRESSED,
+        },
+        _ => ButtonPalette {
+            idle: tint.unwrap_or(BUTTON_COLOR),
+            hover: tint.unwrap_or(BUTTON_HOVER_COLOR),
+            pressed: tint.unwrap_or(BUTTON_PRESSED_COLOR),
+        },
+    };
     let mut button = parent.spawn((
         Button,
         Hovered::default(),
         MenuButtonAction(action),
+        palette,
         Node {
             width: Val::Px(width),
             height: Val::Px(height),
+            align_self: AlignSelf::Center,
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
             border: UiRect::all(Val::Px(1.0)),
+            border_radius: BorderRadius::all(Val::Px(10.0)),
             ..default()
         },
-        BorderColor::all(Color::srgba(0.75, 0.82, 0.76, 0.35)),
-        BackgroundColor(tint.unwrap_or(BUTTON_COLOR)),
-        Text::new(label),
-        TextFont {
-            font_size: FontSize::Px(17.0),
-            ..default()
-        },
-        TextColor(TEXT_COLOR),
-        TextLayout::justify(Justify::Center),
+        BorderColor::all(Color::srgba(0.78, 0.86, 0.66, 0.23)),
+        BackgroundColor(palette.idle),
     ));
+    button.with_children(|button| {
+        let mut text = button.spawn((
+            Text::new(label),
+            TextFont {
+                font_size: FontSize::Px(17.0),
+                ..default()
+            },
+            TextColor(TEXT_COLOR),
+            TextLayout::justify(Justify::Center),
+            Pickable::IGNORE,
+        ));
+        if matches!(action, UiAction::ToggleVsync) {
+            text.insert(VsyncToggleLabel);
+        }
+        if matches!(action, UiAction::ToggleAdaptiveSync) {
+            text.insert(AdaptiveSyncToggleLabel);
+        }
+        if matches!(action, UiAction::ToggleHdr) {
+            text.insert(HdrToggleLabel);
+        }
+    });
     if let Some(tint) = tint {
         button.insert(ButtonTint(tint));
     }
     if let Some(slot) = hotbar_slot {
         button.insert(HotbarSlot(slot));
-    }
-    if matches!(action, UiAction::ToggleVsync) {
-        button.insert(VsyncToggleLabel);
-    }
-    if matches!(action, UiAction::ToggleAdaptiveSync) {
-        button.insert(AdaptiveSyncToggleLabel);
-    }
-    if matches!(action, UiAction::ToggleHdr) {
-        button.insert(HdrToggleLabel);
     }
     button.observe(on_menu_action);
 }
@@ -1087,23 +1354,24 @@ fn add_hotbar_button(parent: &mut ChildSpawnerCommands<'_>, slot: usize, icon: H
         MenuButtonAction(UiAction::SelectHotbar(slot)),
         HotbarSlot(slot),
         Node {
-            width: Val::Px(60.0),
-            height: Val::Px(60.0),
+            width: Val::Px(58.0),
+            height: Val::Px(58.0),
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
             padding: UiRect::all(Val::Px(4.0)),
             border: UiRect::all(Val::Px(1.0)),
+            border_radius: BorderRadius::all(Val::Px(7.0)),
             ..default()
         },
-        BorderColor::all(Color::srgba(0.75, 0.82, 0.76, 0.35)),
+        BorderColor::all(SOFT_BORDER),
         BackgroundColor(BUTTON_COLOR),
     ));
     button.with_children(|button| {
         button.spawn((
             ImageNode::new(icon),
             Node {
-                width: Val::Px(48.0),
-                height: Val::Px(48.0),
+                width: Val::Px(46.0),
+                height: Val::Px(46.0),
                 ..default()
             },
             HotbarIcon(slot),
@@ -1126,25 +1394,26 @@ fn add_block_picker_button(
         InventoryBlockPicker(block),
         ButtonTint(tint),
         Node {
-            width: Val::Px(96.0),
-            height: Val::Px(96.0),
+            width: Val::Px(74.0),
+            height: Val::Px(74.0),
             flex_direction: FlexDirection::Column,
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
-            row_gap: Val::Px(3.0),
-            padding: UiRect::all(Val::Px(5.0)),
+            row_gap: Val::Px(0.0),
+            padding: UiRect::all(Val::Px(6.0)),
             border: UiRect::all(Val::Px(1.0)),
+            border_radius: BorderRadius::all(Val::Px(9.0)),
             ..default()
         },
-        BorderColor::all(Color::srgba(0.75, 0.82, 0.76, 0.35)),
+        BorderColor::all(SOFT_BORDER),
         BackgroundColor(tint),
     ));
     button.with_children(|button| {
         button.spawn((
             ImageNode::new(icon),
             Node {
-                width: Val::Px(76.0),
-                height: Val::Px(76.0),
+                width: Val::Px(60.0),
+                height: Val::Px(60.0),
                 ..default()
             },
             Pickable::IGNORE,
@@ -1456,15 +1725,29 @@ type ButtonAppearanceQuery<'w, 's> = Query<
         Has<Pressed>,
         Option<&'static HotbarSlot>,
         Option<&'static ButtonTint>,
+        Option<&'static ButtonPalette>,
+        &'static mut Node,
         &'static mut BackgroundColor,
+        &'static mut BorderColor,
     ),
     With<Button>,
 >;
 
 fn update_button_appearance(hotbar: Res<Hotbar>, mut buttons: ButtonAppearanceQuery) {
-    for (hovered, pressed, hotbar_slot, tint, mut background) in &mut buttons {
-        let color = if hotbar_slot.is_some_and(|slot| slot.0 == hotbar.selected) {
-            HOTBAR_SELECTED_COLOR
+    for (hovered, pressed, hotbar_slot, tint, palette, mut node, mut background, mut border) in
+        &mut buttons
+    {
+        let selected = hotbar_slot.is_some_and(|slot| slot.0 == hotbar.selected);
+        let color = if selected {
+            ACCENT_BUTTON_COLOR
+        } else if let Some(palette) = palette {
+            if pressed {
+                palette.pressed
+            } else if hovered.0 {
+                palette.hover
+            } else {
+                palette.idle
+            }
         } else if pressed {
             BUTTON_PRESSED_COLOR
         } else if hovered.0 {
@@ -1473,6 +1756,16 @@ fn update_button_appearance(hotbar: Res<Hotbar>, mut buttons: ButtonAppearanceQu
             tint.map_or(BUTTON_COLOR, |tint| tint.0)
         };
         background.0 = color;
+        border.set_all(if selected {
+            ACCENT_COLOR
+        } else if hovered.0 || pressed {
+            Color::srgba(0.78, 0.86, 0.66, 0.62)
+        } else {
+            SOFT_BORDER
+        });
+        if hotbar_slot.is_some() {
+            node.border = UiRect::all(Val::Px(if selected { 2.0 } else { 1.0 }));
+        }
     }
 }
 
@@ -1650,7 +1943,7 @@ fn update_anti_aliasing_readout(
     }
     let label = match settings.anti_aliasing_samples {
         1 => "Off".to_owned(),
-        samples => format!("{samples}×"),
+        samples => format!("{samples}x"),
     };
     for mut text in &mut readout {
         text.0.clone_from(&label);
@@ -1678,9 +1971,9 @@ fn update_adaptive_sync_toggle_label(
     mut labels: Query<&mut Text, With<AdaptiveSyncToggleLabel>>,
 ) {
     let label = if settings.adaptive_sync_enabled {
-        "Adaptive V-Sync: On"
+        "Adaptive: On"
     } else {
-        "Adaptive V-Sync: Off"
+        "Adaptive: Off"
     };
     for mut text in &mut labels {
         if text.0 != label {
@@ -1734,9 +2027,9 @@ fn update_resolution_readout(
         .unwrap_or(UVec2::new(1280, 720));
     let (width, height) = selected_resolution(settings.resolution_index, monitor, fallback);
     let label = if settings.resolution_index == 0 {
-        format!("Native ({width} × {height})")
+        format!("Native ({width} x {height})")
     } else {
-        format!("{width} × {height}")
+        format!("{width} x {height}")
     };
     for mut text in &mut readouts {
         if text.0 != label {
@@ -1777,20 +2070,36 @@ fn on_graphics_slider_change(
 
 fn update_graphics_slider_readouts(
     settings: Res<GameSettings>,
-    mut sliders: Query<(Entity, &GraphicsSlider, &SliderValue)>,
+    sliders: Query<(Entity, &GraphicsSlider, &SliderValue, &SliderRange)>,
     mut labels: Query<(&GraphicsSliderReadout, &mut Text)>,
+    children: Query<&Children>,
+    mut thumbs: Query<&mut Node, With<SliderThumb>>,
     mut commands: Commands,
 ) {
-    for (entity, GraphicsSlider(kind), value) in &mut sliders {
+    for (entity, GraphicsSlider(kind), value, range) in &sliders {
         let desired = graphics_slider_value(&settings, *kind);
         if (value.0 - desired).abs() > 0.001 {
             commands.entity(entity).insert(SliderValue(desired));
+        }
+        let percent = if range.span() > 0.0 {
+            ((desired - range.start()) / range.span()).clamp(0.0, 1.0) * 100.0
+        } else {
+            0.0
+        };
+        let left = Val::Percent(percent);
+        for descendant in children.iter_descendants(entity) {
+            if let Ok(mut thumb) = thumbs.get_mut(descendant) {
+                if thumb.left != left {
+                    thumb.left = left;
+                }
+                break;
+            }
         }
     }
     for (GraphicsSliderReadout(kind), mut text) in &mut labels {
         let value = graphics_slider_value(&settings, *kind);
         let label = if *kind == GraphicsSliderKind::FieldOfView {
-            format!("{value:.0}°")
+            format!("{value:.0}")
         } else {
             format!("{value:.2}")
         };
