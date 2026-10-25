@@ -69,7 +69,17 @@ fn restore_loaded_player(
     };
 
     transform.translation = Vec3::from_array(position);
-    transform.rotation = Quat::from_array(rotation).normalize();
+    let rotation = Quat::from_array(rotation);
+    let scale = rotation
+        .to_array()
+        .into_iter()
+        .map(f32::abs)
+        .fold(0.0, f32::max);
+    transform.rotation = if scale == 0.0 {
+        Quat::IDENTITY
+    } else {
+        (rotation / scale).normalize()
+    };
     let (yaw, pitch, _) = transform.rotation.to_euler(EulerRot::YXZ);
     look.yaw = yaw;
     look.pitch = pitch;
@@ -394,6 +404,51 @@ fn overlaps_world(eye: Vec3, world: &WorldData) -> bool {
 mod tests {
     use super::*;
     use crate::world::Block;
+
+    #[test]
+    fn extreme_finite_rotation_normalizes_to_unit_quaternion() {
+        let mut app = App::new();
+        app.insert_resource(PendingPlayerRestore(Some(([0.0; 3], [3.4e38; 4]))));
+        let player = app
+            .world_mut()
+            .spawn((
+                Transform::default(),
+                PlayerVelocity::default(),
+                PlayerLook::default(),
+                Player,
+            ))
+            .id();
+
+        app.add_systems(Update, restore_loaded_player);
+        app.update();
+
+        let rotation = app.world().get::<Transform>(player).unwrap().rotation;
+        assert!(
+            (rotation.length() - 1.0).abs() < 1e-6,
+            "normalized rotation was {rotation:?}"
+        );
+    }
+
+    #[test]
+    fn zero_saved_rotation_restores_identity_quaternion() {
+        let mut app = App::new();
+        app.insert_resource(PendingPlayerRestore(Some(([0.0; 3], [0.0; 4]))));
+        let player = app
+            .world_mut()
+            .spawn((
+                Transform::default(),
+                PlayerVelocity::default(),
+                PlayerLook::default(),
+                Player,
+            ))
+            .id();
+
+        app.add_systems(Update, restore_loaded_player);
+        app.update();
+
+        let rotation = app.world().get::<Transform>(player).unwrap().rotation;
+        assert_eq!(rotation, Quat::IDENTITY);
+    }
 
     #[test]
     fn swept_axis_motion_stops_at_walls_and_prevents_falling_through_blocks() {
