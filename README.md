@@ -47,6 +47,7 @@ Render distance is measured in horizontal chunks and is clamped to 2–16. Mouse
 
 - `src/world/` defines block types, negative-safe coordinate conversion, seeded terrain with ocean shelves and inland lake basins, chunk storage, streaming, and combined exposed-face meshes. Water uses translucent PBR shading with animated flowing normal maps and darker depth tinting, and remains non-colliding.
 - `src/player/` contains the first-person camera, mouse look, movement, gravity, jumping, sprinting, flight, buoyant swimming, and an axis-aligned collision controller.
+- `src/mobs.rs` spawns up to 20 wandering pigs, spread across the loaded area on dry terrain in each world session.
 - `src/interaction/` contains a voxel grid raycast, block selection, breaking particles, placement, and outline drawing.
 - `src/rendering/` sets up the directional sunlight, ambient light, world material, blue sky clear color, and applies the selected MSAA level to the player camera.
 - `src/ui/` creates the main menu, mouse sensitivity, graphics, and world/time options (including day/night cycle speed), pause menu, image-only square hotbar and block picker, crosshair, and F3 debug text. Block cube icons are generated from the block face colors at startup.

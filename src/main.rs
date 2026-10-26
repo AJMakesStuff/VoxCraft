@@ -1,5 +1,6 @@
 mod game;
 mod interaction;
+mod mobs;
 mod player;
 mod rendering;
 mod ui;
@@ -8,6 +9,7 @@ mod world;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use game::{GamePlugin, GameSettings};
+use mobs::MobPlugin;
 
 fn main() {
     let settings = GameSettings::from_args();
@@ -23,6 +25,7 @@ fn main() {
             ..default()
         }))
         .add_plugins(GamePlugin)
+        .add_plugins(MobPlugin)
         .add_systems(Startup, maximize_primary_window)
         .run();
 }
