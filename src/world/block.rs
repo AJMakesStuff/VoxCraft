@@ -20,6 +20,7 @@ pub enum Block {
     GoldBlock = 13,
     OakLogX = 14,
     OakLogZ = 15,
+    Water = 16,
 }
 
 impl Block {
@@ -40,7 +41,7 @@ impl Block {
     ];
 
     pub const fn is_solid(self) -> bool {
-        !matches!(self, Self::Air)
+        !matches!(self, Self::Air | Self::Water)
     }
 
     pub const fn from_id(id: u8) -> Option<Self> {
@@ -61,6 +62,7 @@ impl Block {
             13 => Some(Self::GoldBlock),
             14 => Some(Self::OakLogX),
             15 => Some(Self::OakLogZ),
+            16 => Some(Self::Water),
             _ => None,
         }
     }
@@ -76,6 +78,7 @@ impl Block {
             Self::OakPlanks => "Oak Planks",
             Self::OakLog => "Oak Log",
             Self::OakLogX | Self::OakLogZ => "Oak Log",
+            Self::Water => "Water",
             Self::Cobblestone => "Cobblestone",
             Self::Bricks => "Bricks",
             Self::Snow => "Snow",
@@ -87,7 +90,7 @@ impl Block {
 
     pub const fn texture_index(self) -> usize {
         match self {
-            Self::Air | Self::Grass => 0,
+            Self::Air | Self::Grass | Self::Water => 0,
             Self::Dirt => 1,
             Self::Stone => 2,
             Self::Sand => 3,
@@ -154,6 +157,7 @@ impl Block {
             Self::Gravel => (0.50, 0.48, 0.43),
             Self::Obsidian => (0.16, 0.14, 0.22),
             Self::GoldBlock => (0.92, 0.67, 0.12),
+            Self::Water => (0.30, 0.68, 0.79),
         };
         Vec4::new(r, g, b, 1.0)
     }

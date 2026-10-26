@@ -7,8 +7,8 @@ use bevy::{
 use futures_lite::future;
 
 use super::{
-    Block, CHUNK_SIZE, ChunkCoord, ChunkData, TerrainNoise, WORLD_HEIGHT, build_chunk_mesh,
-    generate_chunk, local_from_world,
+    Block, CHUNK_SIZE, ChunkCoord, ChunkData, ChunkMeshes, TerrainNoise, WORLD_HEIGHT,
+    build_chunk_meshes, generate_chunk, local_from_world,
 };
 use crate::{
     game::{GameSettings, GameState},
@@ -30,6 +30,7 @@ fn background_task_limit() -> usize {
 pub struct LoadedChunk {
     pub data: ChunkData,
     pub entity: Option<Entity>,
+    pub water_entity: Option<Entity>,
 }
 
 #[derive(Resource)]
@@ -116,7 +117,7 @@ struct ChunkLoadTask {
 struct ChunkMeshTask {
     coord: ChunkCoord,
     revision: u64,
-    task: Task<super::ChunkMesh>,
+    task: Task<ChunkMeshes>,
 }
 
 #[derive(Component)]
@@ -217,10 +218,13 @@ fn update_chunk_targets(
             .filter(|coord| !world.desired.contains(coord))
             .collect();
         for coord in stale {
-            if let Some(chunk) = world.chunks.remove(&coord)
-                && let Some(entity) = chunk.entity
-            {
-                commands.entity(entity).despawn();
+            if let Some(chunk) = world.chunks.remove(&coord) {
+                if let Some(entity) = chunk.entity {
+                    commands.entity(entity).despawn();
+                }
+                if let Some(entity) = chunk.water_entity {
+                    commands.entity(entity).despawn();
+                }
             }
         }
     }
@@ -278,15 +282,25 @@ fn finish_chunk_tasks(
             data.set(local_from_world(pos), block);
         }
         if data.is_empty() {
-            world
-                .chunks
-                .insert(coord, LoadedChunk { data, entity: None });
+            world.chunks.insert(
+                coord,
+                LoadedChunk {
+                    data,
+                    entity: None,
+                    water_entity: None,
+                },
+            );
             continue;
         }
         let mesh_chunk = data.clone();
-        world
-            .chunks
-            .insert(coord, LoadedChunk { data, entity: None });
+        world.chunks.insert(
+            coord,
+            LoadedChunk {
+                data,
+                entity: None,
+                water_entity: None,
+            },
+        );
         let overrides = world.overrides.clone();
         let seed = world.seed;
         let revision = world
@@ -295,7 +309,7 @@ fn finish_chunk_tasks(
             .copied()
             .unwrap_or_default();
         let task = AsyncComputeTaskPool::get().spawn(async move {
-            super::build_chunk_mesh_from_data(coord, &mesh_chunk, seed, &overrides)
+            super::meshing::build_chunk_meshes_from_data(coord, &mesh_chunk, seed, &overrides)
         });
         commands.spawn(ChunkMeshTask {
             coord,
@@ -339,13 +353,26 @@ fn finish_chunk_mesh_tasks(
         let Some(chunk) = world.chunks.get_mut(&coord) else {
             continue;
         };
-        if !chunk_mesh.is_empty() {
-            let mesh = meshes.add(chunk_mesh.into_mesh());
+        if !chunk_mesh.solid.is_empty() {
+            let mesh = meshes.add(chunk_mesh.solid.into_mesh());
             chunk.entity = Some(
                 commands
                     .spawn((
                         Mesh3d(mesh),
-                        MeshMaterial3d(materials.0.clone()),
+                        MeshMaterial3d(materials.terrain.clone()),
+                        Transform::from_translation(coord.origin().as_vec3()),
+                        ChunkTag,
+                    ))
+                    .id(),
+            );
+        }
+        if !chunk_mesh.water.is_empty() {
+            let mesh = meshes.add(chunk_mesh.water.into_mesh());
+            chunk.water_entity = Some(
+                commands
+                    .spawn((
+                        Mesh3d(mesh),
+                        MeshMaterial3d(materials.water.clone()),
                         Transform::from_translation(coord.origin().as_vec3()),
                         ChunkTag,
                     ))
@@ -356,31 +383,53 @@ fn finish_chunk_mesh_tasks(
 }
 
 #[derive(Resource)]
-pub struct WorldMaterial(pub Handle<StandardMaterial>);
+pub struct WorldMaterial {
+    pub terrain: Handle<StandardMaterial>,
+    pub water: Handle<StandardMaterial>,
+}
 
 pub fn rebuild_chunk_mesh(
     commands: &mut Commands,
     world: &mut WorldData,
     meshes: &mut Assets<Mesh>,
-    material: &Handle<StandardMaterial>,
+    material: &WorldMaterial,
     coord: ChunkCoord,
 ) {
     let revision = world.mesh_revisions.entry(coord).or_default();
     *revision = revision.wrapping_add(1);
-    let old_entity = world.chunks.get(&coord).and_then(|chunk| chunk.entity);
-    if let Some(entity) = old_entity {
-        commands.entity(entity).despawn();
+    if let Some(chunk) = world.chunks.get(&coord) {
+        if let Some(entity) = chunk.entity {
+            commands.entity(entity).despawn();
+        }
+        if let Some(entity) = chunk.water_entity {
+            commands.entity(entity).despawn();
+        }
     }
-    let mesh_data = build_chunk_mesh(coord, world);
-    let entity = if mesh_data.is_empty() {
+    let mesh_data = build_chunk_meshes(coord, world);
+    let entity = if mesh_data.solid.is_empty() {
         None
     } else {
-        let mesh = meshes.add(mesh_data.into_mesh());
+        let mesh = meshes.add(mesh_data.solid.into_mesh());
         Some(
             commands
                 .spawn((
                     Mesh3d(mesh),
-                    MeshMaterial3d(material.clone()),
+                    MeshMaterial3d(material.terrain.clone()),
+                    Transform::from_translation(coord.origin().as_vec3()),
+                    ChunkTag,
+                ))
+                .id(),
+        )
+    };
+    let water_entity = if mesh_data.water.is_empty() {
+        None
+    } else {
+        let mesh = meshes.add(mesh_data.water.into_mesh());
+        Some(
+            commands
+                .spawn((
+                    Mesh3d(mesh),
+                    MeshMaterial3d(material.water.clone()),
                     Transform::from_translation(coord.origin().as_vec3()),
                     ChunkTag,
                 ))
@@ -389,6 +438,7 @@ pub fn rebuild_chunk_mesh(
     };
     if let Some(chunk) = world.chunks.get_mut(&coord) {
         chunk.entity = entity;
+        chunk.water_entity = water_entity;
     }
 }
 
@@ -405,6 +455,7 @@ mod tests {
             LoadedChunk {
                 data: ChunkData::default(),
                 entity: None,
+                water_entity: None,
             },
         );
         let pos = IVec3::new(15, 10, 7);
@@ -424,6 +475,7 @@ mod tests {
             LoadedChunk {
                 data: ChunkData::default(),
                 entity: None,
+                water_entity: None,
             },
         );
         world.overrides.insert(IVec3::new(1, 2, 3), Block::Stone);

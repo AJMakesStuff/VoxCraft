@@ -320,7 +320,7 @@ fn edit_block(params: BlockEditParams) {
     affected.dedup();
     for chunk in affected {
         if world.chunks.contains_key(&chunk) {
-            rebuild_chunk_mesh(&mut commands, &mut world, &mut meshes, &material.0, chunk);
+            rebuild_chunk_mesh(&mut commands, &mut world, &mut meshes, &material, chunk);
         }
     }
 }

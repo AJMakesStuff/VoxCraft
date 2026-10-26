@@ -7,7 +7,7 @@ use bevy::{
 
 use crate::{
     game::{GameSettings, GameState, OptionsReturn},
-    world::{WorldData, terrain_height},
+    world::{WorldData, terrain_spawn_height},
 };
 
 const EYE_HEIGHT: f32 = 1.7;
@@ -15,6 +15,11 @@ const PLAYER_RADIUS: f32 = 0.30;
 const PLAYER_HEADROOM: f32 = 0.18;
 const FLY_TAP_WINDOW_SECS: f32 = 0.35;
 const WALK_SPEED: f32 = 5.0;
+const SWIM_SPEED: f32 = 3.0;
+const SWIM_SPRINT_SPEED: f32 = 4.2;
+const SWIM_HORIZONTAL_ACCEL: f32 = 4.5;
+const SWIM_VERTICAL_DRAG: f32 = 2.2;
+const SWIM_VERTICAL_SPEED: f32 = 4.5;
 const HEAD_BOB_AMPLITUDE: f32 = 0.035;
 const HEAD_BOB_STRIDE_LENGTH: f32 = 1.8;
 const HEAD_BOB_FADE_SECS: f32 = 0.12;
@@ -34,6 +39,7 @@ pub(crate) struct PlayerLook {
     pitch: f32,
     grounded: bool,
     pub(crate) flying: bool,
+    pub(crate) underwater: bool,
     last_space_press: Option<f32>,
 }
 
@@ -101,6 +107,7 @@ fn restore_loaded_player(
     look.pitch = pitch;
     look.grounded = false;
     look.flying = was_flying;
+    look.underwater = false;
     look.last_space_press = None;
     *head_bob = PlayerHeadBob::default();
     velocity.0 = Vec3::ZERO;
@@ -117,7 +124,7 @@ pub fn player_forward(transform: &Transform) -> Vec3 {
 }
 
 fn spawn_player(mut commands: Commands, settings: Res<crate::game::GameSettings>) {
-    let ground = terrain_height(settings.seed, 0, 0) as f32;
+    let ground = terrain_spawn_height(settings.seed, 0, 0) as f32;
     commands.spawn((
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection {
@@ -202,7 +209,7 @@ fn reset_player_state(
     head_bob: &mut PlayerHeadBob,
     spawn_seed: &mut PlayerSpawnSeed,
 ) {
-    let ground = terrain_height(seed, 0, 0) as f32;
+    let ground = terrain_spawn_height(seed, 0, 0) as f32;
     transform.translation = Vec3::new(0.0, ground + 1.0 + EYE_HEIGHT, 0.0);
     transform.rotation = Quat::IDENTITY;
     velocity.0 = Vec3::ZERO;
@@ -210,6 +217,7 @@ fn reset_player_state(
     look.pitch = 0.0;
     look.grounded = false;
     look.flying = false;
+    look.underwater = false;
     look.last_space_press = None;
     *head_bob = PlayerHeadBob::default();
     spawn_seed.0 = seed;
@@ -295,6 +303,9 @@ fn movement(
     let dt = time.delta_secs().min(0.05);
     transform.translation.y -= head_bob.offset;
     head_bob.offset = 0.0;
+    let immersion = water_immersion(transform.translation, &world);
+    let swimming = immersion > 0.0 && !look.flying;
+    look.underwater = head_is_underwater(transform.translation, &world);
     let yaw = look.yaw;
     let forward = Vec3::new(-yaw.sin(), 0.0, -yaw.cos());
     let right = Vec3::new(yaw.cos(), 0.0, -yaw.sin());
@@ -315,7 +326,13 @@ fn movement(
         wish = wish.normalize();
     }
     let sprinting = keys.pressed(KeyCode::ShiftLeft);
-    let speed = if sprinting {
+    let speed = if swimming {
+        if sprinting {
+            SWIM_SPRINT_SPEED
+        } else {
+            SWIM_SPEED
+        }
+    } else if sprinting {
         if look.flying {
             settings.flying_shift_speed
         } else {
@@ -324,13 +341,23 @@ fn movement(
     } else {
         WALK_SPEED
     };
-    velocity.0.x = wish.x * speed;
-    velocity.0.z = wish.z * speed;
+    if swimming {
+        let current = Vec3::new(0.18, 0.0, 0.06) * immersion;
+        let target = wish * speed + current;
+        let response = 1.0 - (-SWIM_HORIZONTAL_ACCEL * dt).exp();
+        velocity.0.x += (target.x - velocity.0.x) * response;
+        velocity.0.z += (target.z - velocity.0.z) * response;
+    } else {
+        velocity.0.x = wish.x * speed;
+        velocity.0.z = wish.z * speed;
+    }
     if keys.just_pressed(KeyCode::Space) {
         let toggled_flight = register_space_press(&mut look, time.elapsed_secs());
         if toggled_flight {
             velocity.0.y = 0.0;
             look.grounded = false;
+        } else if swimming {
+            velocity.0.y = velocity.0.y.max(3.4);
         } else if !look.flying && look.grounded {
             velocity.0.y = 8.5;
             look.grounded = false;
@@ -348,6 +375,16 @@ fn movement(
             0.0
         };
         velocity.0.y = (ascend - descend) * speed;
+    } else if swimming {
+        let mut acceleration = (immersion - 0.5) * 14.0;
+        if keys.pressed(KeyCode::Space) {
+            acceleration += 9.0;
+        }
+        if keys.pressed(KeyCode::ControlLeft) {
+            acceleration -= 10.0;
+        }
+        velocity.0.y = ((velocity.0.y + acceleration * dt) * (-SWIM_VERTICAL_DRAG * dt).exp())
+            .clamp(-SWIM_VERTICAL_SPEED, SWIM_VERTICAL_SPEED);
     } else {
         velocity.0.y = (velocity.0.y - 24.0 * dt).max(-50.0);
     }
@@ -372,15 +409,56 @@ fn movement(
     transform.translation = next;
 
     let horizontal_speed = velocity.0.x.hypot(velocity.0.z);
-    let walking = look.grounded && !look.flying && horizontal_speed > 0.1;
-    if walking {
+    let walking = look.grounded && !look.flying && !swimming && horizontal_speed > 0.1;
+    if walking || (swimming && horizontal_speed > 0.1) {
         head_bob.phase += horizontal_speed * dt * std::f32::consts::TAU / HEAD_BOB_STRIDE_LENGTH;
     }
-    let target_intensity = if walking { 1.0 } else { 0.0 };
+    let target_intensity = if walking {
+        1.0
+    } else if swimming && horizontal_speed > 0.1 {
+        0.35
+    } else {
+        0.0
+    };
     let blend = 1.0 - (-dt / HEAD_BOB_FADE_SECS).exp();
     head_bob.intensity += (target_intensity - head_bob.intensity) * blend;
-    head_bob.offset = head_bob.phase.sin() * HEAD_BOB_AMPLITUDE * head_bob.intensity;
+    let bob_amplitude = if swimming { 0.014 } else { HEAD_BOB_AMPLITUDE };
+    head_bob.offset = head_bob.phase.sin() * bob_amplitude * head_bob.intensity;
     transform.translation.y += head_bob.offset;
+}
+
+fn water_immersion(eye: Vec3, world: &WorldData) -> f32 {
+    const HORIZONTAL_OFFSETS: [(f32, f32); 5] = [
+        (0.0, 0.0),
+        (-0.22, -0.22),
+        (-0.22, 0.22),
+        (0.22, -0.22),
+        (0.22, 0.22),
+    ];
+    const BODY_HEIGHTS: [f32; 5] = [0.1, 0.48, 0.86, 1.24, 1.62];
+    let feet = eye.y - EYE_HEIGHT;
+    let mut submerged = 0;
+    for (offset_x, offset_z) in HORIZONTAL_OFFSETS {
+        for height in BODY_HEIGHTS {
+            let block = IVec3::new(
+                (eye.x + offset_x).floor() as i32,
+                (feet + height).floor() as i32,
+                (eye.z + offset_z).floor() as i32,
+            );
+            if world.block_at(block) == crate::world::Block::Water {
+                submerged += 1;
+            }
+        }
+    }
+    submerged as f32 / (HORIZONTAL_OFFSETS.len() * BODY_HEIGHTS.len()) as f32
+}
+
+fn head_is_underwater(eye: Vec3, world: &WorldData) -> bool {
+    world.block_at(IVec3::new(
+        eye.x.floor() as i32,
+        eye.y.floor() as i32,
+        eye.z.floor() as i32,
+    )) == crate::world::Block::Water
 }
 
 fn register_space_press(look: &mut PlayerLook, now: f32) -> bool {

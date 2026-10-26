@@ -29,10 +29,10 @@ Render distance is measured in horizontal chunks and is clamped to 2–16. Mouse
 | W / A / S / D | Move |
 | Mouse | Look |
 | Mouse wheel | Cycle through hotbar slots |
-| Space | Jump |
+| Space | Jump; hold to swim upward in water |
 | Double-tap Space | Toggle flight |
 | Space while flying | Rise |
-| Left Ctrl while flying | Descend; touching down exits flight |
+| Left Ctrl | Dive while swimming; descend while flying (touching down exits flight) |
 | Left Shift | Sprint and move faster while flying |
 | Left mouse | Break targeted block (bedrock is unbreakable) |
 | Middle mouse | Pick the targeted block into the selected hotbar slot |
@@ -45,8 +45,8 @@ Render distance is measured in horizontal chunks and is clamped to 2–16. Mouse
 
 ## Architecture
 
-- `src/world/` defines block types, negative-safe coordinate conversion, seeded terrain, chunk storage, streaming, and combined exposed-face meshes.
-- `src/player/` contains the first-person camera, mouse look, movement, gravity, jumping, sprinting, flight, and an axis-aligned collision controller.
+- `src/world/` defines block types, negative-safe coordinate conversion, seeded terrain with ocean shelves and inland lake basins, chunk storage, streaming, and combined exposed-face meshes. Water uses translucent PBR shading with animated flowing normal maps and darker depth tinting, and remains non-colliding.
+- `src/player/` contains the first-person camera, mouse look, movement, gravity, jumping, sprinting, flight, buoyant swimming, and an axis-aligned collision controller.
 - `src/interaction/` contains a voxel grid raycast, block selection, breaking particles, placement, and outline drawing.
 - `src/rendering/` sets up the directional sunlight, ambient light, world material, blue sky clear color, and applies the selected MSAA level to the player camera.
 - `src/ui/` creates the main menu, mouse sensitivity, graphics, and world/time options (including day/night cycle speed), pause menu, image-only square hotbar and block picker, crosshair, and F3 debug text. Block cube icons are generated from the block face colors at startup.

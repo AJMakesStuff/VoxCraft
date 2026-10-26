@@ -76,6 +76,9 @@ struct MainMenuActions;
 struct CrosshairUi;
 
 #[derive(Component)]
+struct UnderwaterOverlay;
+
+#[derive(Component)]
 struct HotbarRoot;
 
 #[derive(Component)]
@@ -345,7 +348,8 @@ impl Plugin for UiPlugin {
                     update_debug_text,
                 )
                     .chain(),
-            );
+            )
+            .add_systems(Update, update_underwater_overlay);
     }
 }
 
@@ -367,8 +371,43 @@ fn setup_ui(
     setup_inventory(&mut commands, &icons, &hotbar);
     setup_hotbar(&mut commands, &icons);
     setup_crosshair(&mut commands);
+    setup_underwater_overlay(&mut commands);
     setup_debug_text(&mut commands);
     setup_day_night_readout(&mut commands);
+}
+
+fn setup_underwater_overlay(commands: &mut Commands) {
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(0.0),
+            right: Val::Px(0.0),
+            top: Val::Px(0.0),
+            bottom: Val::Px(0.0),
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.035, 0.30, 0.42, 0.22)),
+        UnderwaterOverlay,
+        Pickable::IGNORE,
+        Visibility::Hidden,
+        GlobalZIndex(1),
+    ));
+}
+
+fn update_underwater_overlay(
+    player: Query<&PlayerLook, With<Player>>,
+    mut overlays: Query<&mut Visibility, With<UnderwaterOverlay>>,
+) {
+    let underwater = player.single().is_ok_and(|look| look.underwater);
+    for mut visibility in &mut overlays {
+        *visibility = if underwater {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+    }
 }
 
 fn create_screen(
@@ -582,7 +621,7 @@ fn setup_main_menu(commands: &mut Commands, icons: &BlockIconAssets) {
                 add_save_status_label(menu);
                 add_label(
                     menu,
-                    "WASD move    |    Space jump    |    Mouse look",
+                    "WASD move    |    Space jump / swim    |    Mouse look",
                     12.0,
                     MUTED_TEXT_COLOR,
                 );
@@ -1157,6 +1196,12 @@ fn setup_options_menu(commands: &mut Commands, settings: &GameSettings) {
             ))
             .with_children(|section| {
                 add_section_title(section, "CONTROLS");
+                add_label(
+                    section,
+                    "In water, hold Space to swim up and Left Ctrl to dive. Release both to float.",
+                    13.0,
+                    MUTED_TEXT_COLOR,
+                );
                 add_graphics_slider(
                     section,
                     "Mouse sensitivity",

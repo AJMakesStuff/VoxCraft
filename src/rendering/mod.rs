@@ -3,6 +3,8 @@ use bevy::{
     camera::Hdr,
     image::{Image, ImageSampler},
     light::NotShadowCaster,
+    math::Affine2,
+    pbr::{DistanceFog, FogFalloff},
     prelude::*,
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
     render::view::{ColorGrading, Msaa},
@@ -10,8 +12,11 @@ use bevy::{
 
 use crate::{
     game::{DayNightCycle, GameSettings, GameState},
-    player::Player,
-    world::{WorldMaterial, block_texture_atlas},
+    player::{Player, PlayerLook},
+    world::{
+        WorldMaterial, block_texture_atlas, update_water_normal_texture, water_normal_texture,
+        water_texture,
+    },
 };
 
 const SUN_DIRECTION: Vec3 = Vec3::new(-20.0, 40.0, -110.0);
@@ -47,6 +52,13 @@ struct MoonLight;
 
 pub struct RenderingPlugin;
 
+#[derive(Resource)]
+struct WaterNormalAnimation {
+    texture: Handle<Image>,
+    elapsed: f32,
+    frame_accumulator: f32,
+}
+
 impl Plugin for RenderingPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, setup_scene).add_systems(
@@ -55,6 +67,8 @@ impl Plugin for RenderingPlugin {
                 update_day_night,
                 sync_anti_aliasing,
                 sync_camera_graphics_settings,
+                animate_water_normals,
+                sync_underwater_fog,
             ),
         );
     }
@@ -111,7 +125,27 @@ fn setup_scene(
         metallic: 0.0,
         ..default()
     });
-    commands.insert_resource(WorldMaterial(material));
+    let water_surface = images.add(water_texture());
+    let water_normals = images.add(water_normal_texture());
+    let water_material = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.32, 0.59, 0.70, 0.76),
+        base_color_texture: Some(water_surface),
+        normal_map_texture: Some(water_normals.clone()),
+        perceptual_roughness: 0.38,
+        metallic: 0.0,
+        reflectance: 0.48,
+        alpha_mode: AlphaMode::Blend,
+        ..default()
+    });
+    commands.insert_resource(WorldMaterial {
+        terrain: material,
+        water: water_material,
+    });
+    commands.insert_resource(WaterNormalAnimation {
+        texture: water_normals,
+        elapsed: 0.0,
+        frame_accumulator: 0.0,
+    });
 
     let celestial_mesh = meshes.add(Sphere::new(SUN_RADIUS).mesh().uv(32, 20));
     let sun_surface = images.add(sun_surface_texture());
@@ -225,6 +259,53 @@ fn setup_scene(
         ..default()
     });
     commands.insert_resource(ClearColor(Color::srgb(0.48, 0.72, 0.94)));
+}
+
+fn animate_water_normals(
+    time: Res<Time>,
+    state: Res<State<GameState>>,
+    mut animation: ResMut<WaterNormalAnimation>,
+    mut images: ResMut<Assets<Image>>,
+    world_material: Res<WorldMaterial>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    if matches!(*state.get(), GameState::MainMenu | GameState::Options) {
+        return;
+    }
+    animation.frame_accumulator += time.delta_secs();
+    if animation.frame_accumulator < 1.0 / 30.0 {
+        return;
+    }
+
+    animation.elapsed += animation.frame_accumulator;
+    animation.frame_accumulator = 0.0;
+    if let Some(mut image) = images.get_mut(&animation.texture) {
+        update_water_normal_texture(&mut image, animation.elapsed);
+    }
+    if let Some(mut material) = materials.get_mut(&world_material.water) {
+        material.uv_transform = Affine2::from_translation(Vec2::new(
+            (animation.elapsed * 0.018).rem_euclid(1.0),
+            (animation.elapsed * 0.006).rem_euclid(1.0),
+        ));
+    }
+}
+
+fn sync_underwater_fog(
+    mut commands: Commands,
+    cameras: Query<(Entity, &PlayerLook, Option<&DistanceFog>), With<Player>>,
+) {
+    for (entity, look, fog) in &cameras {
+        if look.underwater && fog.is_none() {
+            commands.entity(entity).insert(DistanceFog {
+                color: Color::srgb(0.025, 0.19, 0.27),
+                directional_light_color: Color::srgba(0.12, 0.48, 0.65, 0.10),
+                directional_light_exponent: 8.0,
+                falloff: FogFalloff::Exponential { density: 0.055 },
+            });
+        } else if !look.underwater && fog.is_some() {
+            commands.entity(entity).remove::<DistanceFog>();
+        }
+    }
 }
 
 fn update_day_night(

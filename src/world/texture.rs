@@ -1,6 +1,6 @@
 use bevy::{
     asset::RenderAssetUsages,
-    image::{Image, ImageSampler},
+    image::{Image, ImageAddressMode, ImageSampler, ImageSamplerDescriptor},
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
 
@@ -54,6 +54,88 @@ pub fn block_texture_atlas() -> Image {
     image
 }
 
+pub fn water_texture() -> Image {
+    const SIZE: u32 = 128;
+    let mut pixels = vec![0; (SIZE * SIZE * 4) as usize];
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let u = x as f32 / SIZE as f32;
+            let v = y as f32 / SIZE as f32;
+            // Keep the diffuse texture close to white so the material tint controls
+            // water color without introducing a noticeable repeating tile pattern.
+            let broad = (std::f32::consts::TAU * (2.0 * u + v)).sin();
+            let cross = (std::f32::consts::TAU * (-u + 2.0 * v)).cos();
+            let ripple = broad * cross * 2.0;
+            let index = ((y * SIZE + x) * 4) as usize;
+            pixels[index] = (250.0 + ripple).clamp(0.0, 255.0) as u8;
+            pixels[index + 1] = (252.0 + ripple).clamp(0.0, 255.0) as u8;
+            pixels[index + 2] = (255.0 + ripple).clamp(0.0, 255.0) as u8;
+            pixels[index + 3] = 255;
+        }
+    }
+
+    let mut image = Image::new(
+        Extent3d {
+            width: SIZE,
+            height: SIZE,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        pixels,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+    );
+    let mut sampler = ImageSamplerDescriptor::linear();
+    sampler.set_address_mode(ImageAddressMode::Repeat);
+    image.sampler = ImageSampler::Descriptor(sampler);
+    image
+}
+
+pub fn water_normal_texture() -> Image {
+    const SIZE: u32 = 128;
+    let mut image = Image::new(
+        Extent3d {
+            width: SIZE,
+            height: SIZE,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        vec![0; (SIZE * SIZE * 4) as usize],
+        TextureFormat::Rgba8Unorm,
+        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+    );
+    let mut sampler = ImageSamplerDescriptor::linear();
+    sampler.set_address_mode(ImageAddressMode::Repeat);
+    image.sampler = ImageSampler::Descriptor(sampler);
+    update_water_normal_texture(&mut image, 0.0);
+    image
+}
+
+pub(crate) fn update_water_normal_texture(image: &mut Image, time: f32) {
+    let Some(pixels) = image.data.as_mut() else {
+        return;
+    };
+    const SIZE: u32 = 128;
+    let tau = std::f32::consts::TAU;
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let u = x as f32 / SIZE as f32;
+            let v = y as f32 / SIZE as f32;
+            let phase_a = tau * (2.0 * u + v) - time * 0.48;
+            let phase_b = tau * (-u + 2.0 * v) + time * 0.34;
+            let phase_c = tau * (3.0 * u - 2.0 * v) - time * 0.62;
+            let slope_u = phase_a.cos() * 0.045 - phase_b.cos() * 0.032 + phase_c.cos() * 0.012;
+            let slope_v = phase_a.cos() * 0.030 + phase_b.cos() * 0.040 - phase_c.cos() * 0.010;
+            let normal = bevy::math::Vec3::new(-slope_u, 1.0, -slope_v).normalize();
+            let index = ((y * SIZE + x) * 4) as usize;
+            pixels[index] = ((normal.x * 0.5 + 0.5) * 255.0) as u8;
+            pixels[index + 1] = ((normal.y * 0.5 + 0.5) * 255.0) as u8;
+            pixels[index + 2] = ((normal.z * 0.5 + 0.5) * 255.0) as u8;
+            pixels[index + 3] = 255;
+        }
+    }
+}
+
 pub(crate) fn block_texture_pixel(block: Block, x: u32, y: u32) -> u8 {
     let (base, variation) = match block {
         Block::Air => (244, 0),
@@ -70,6 +152,7 @@ pub(crate) fn block_texture_pixel(block: Block, x: u32, y: u32) -> u8 {
         Block::Gravel => (235, 28),
         Block::Obsidian => (20, 7),
         Block::GoldBlock => (244, 14),
+        Block::Water => (255, 0),
     };
 
     let mut hash = (block as u32).wrapping_mul(0x9e37_79b9)
