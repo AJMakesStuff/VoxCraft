@@ -120,9 +120,18 @@ fn setup_scene(
     let block_texture = images.add(block_texture_atlas());
     let material = materials.add(StandardMaterial {
         base_color: Color::WHITE,
-        base_color_texture: Some(block_texture),
+        base_color_texture: Some(block_texture.clone()),
         perceptual_roughness: 1.0,
         metallic: 0.0,
+        ..default()
+    });
+    let glass_material = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.78, 0.91, 0.98, 0.32),
+        base_color_texture: Some(block_texture),
+        perceptual_roughness: 0.12,
+        metallic: 0.0,
+        reflectance: 0.42,
+        alpha_mode: AlphaMode::Blend,
         ..default()
     });
     let water_surface = images.add(water_texture());
@@ -140,6 +149,7 @@ fn setup_scene(
     commands.insert_resource(WorldMaterial {
         terrain: material,
         water: water_material,
+        glass: glass_material,
     });
     commands.insert_resource(WaterNormalAnimation {
         texture: water_normals,

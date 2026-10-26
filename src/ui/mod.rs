@@ -51,6 +51,17 @@ const DANGER_TEXT_COLOR: Color = Color::srgb(0.84, 0.42, 0.36);
 const TEXT_COLOR: Color = Color::srgb(0.94, 0.94, 0.86);
 const MUTED_TEXT_COLOR: Color = Color::srgb(0.66, 0.72, 0.65);
 const SOFT_BORDER: Color = Color::srgba(0.78, 0.86, 0.66, 0.16);
+const INVENTORY_PANEL_COLOR: Color = PANEL_COLOR;
+const INVENTORY_BORDER_COLOR: Color = SOFT_BORDER;
+const INVENTORY_TAB_COLOR: Color = CARD_ALT_COLOR;
+const INVENTORY_TAB_HOVER: Color = BUTTON_HOVER_COLOR;
+const INVENTORY_TAB_PRESSED: Color = BUTTON_PRESSED_COLOR;
+const INVENTORY_TAB_SELECTED: Color = ACCENT_BUTTON_COLOR;
+const INVENTORY_SLOT_COLOR: Color = BUTTON_COLOR;
+const INVENTORY_SLOT_HOVER: Color = BUTTON_HOVER_COLOR;
+const INVENTORY_SLOT_PRESSED: Color = BUTTON_PRESSED_COLOR;
+const INVENTORY_TEXT_COLOR: Color = TEXT_COLOR;
+const INVENTORY_MUTED_TEXT: Color = MUTED_TEXT_COLOR;
 
 #[derive(Component)]
 struct ScreenRoot(GameState);
@@ -104,6 +115,20 @@ struct AntiAliasingReadout;
 
 #[derive(Component)]
 struct InventoryHint;
+
+#[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
+enum InventoryCategory {
+    #[default]
+    Terrain,
+    Nature,
+    Building,
+}
+
+#[derive(Component)]
+struct InventoryCategoryTab(InventoryCategory);
+
+#[derive(Component)]
+struct InventoryCategoryPanel(InventoryCategory);
 
 #[derive(Component)]
 struct HotbarSlot(usize);
@@ -253,6 +278,7 @@ struct MenuButtonAction(UiAction);
 struct MenuActionInteraction<'w> {
     state: Res<'w, State<GameState>>,
     dragged: ResMut<'w, DraggedBlock>,
+    inventory_category: ResMut<'w, InventoryCategory>,
 }
 
 #[derive(Clone, Copy)]
@@ -286,6 +312,7 @@ enum UiAction {
     ConfirmDeleteSave,
     CancelDeleteSave,
     SelectHotbar(usize),
+    SelectInventoryCategory(InventoryCategory),
 }
 
 #[derive(Resource, Default)]
@@ -307,6 +334,7 @@ impl Plugin for UiPlugin {
         app.init_resource::<DebugEnabled>()
             .init_resource::<OptionsMenuPage>()
             .init_resource::<DraggedBlock>()
+            .init_resource::<InventoryCategory>()
             .init_resource::<SaveStatus>()
             .init_resource::<SaveFlow>()
             .init_resource::<SaveCatalogRevision>()
@@ -320,6 +348,7 @@ impl Plugin for UiPlugin {
                     update_delete_world_confirmation_visibility,
                     update_save_slot_dialog_visibility,
                     update_options_page_visibility,
+                    update_inventory_category_visibility,
                 ),
             )
             .add_systems(Update, update_save_name_keyboard)
@@ -416,8 +445,20 @@ fn create_screen(
     backdrop: Color,
     panel_width: f32,
 ) -> Entity {
-    let scrollable = state == GameState::Options;
+    let scrollable = matches!(state, GameState::Options | GameState::Inventory);
+    let compact_inventory = state == GameState::Inventory;
     let split_layout = matches!(state, GameState::MainMenu | GameState::Paused);
+    let screen_gradient = if compact_inventory {
+        LinearGradient::to_top(vec![
+            Color::srgba(0.025, 0.035, 0.045, 0.06).into(),
+            Color::srgba(0.015, 0.02, 0.03, 0.24).into(),
+        ])
+    } else {
+        LinearGradient::to_top(vec![
+            Color::srgba(0.07, 0.14, 0.10, 0.56).into(),
+            Color::srgba(0.015, 0.03, 0.035, 0.86).into(),
+        ])
+    };
     let root = commands
         .spawn((
             Node {
@@ -433,10 +474,7 @@ fn create_screen(
                 ..default()
             },
             BackgroundColor(backdrop),
-            BackgroundGradient::from(LinearGradient::to_top(vec![
-                Color::srgba(0.07, 0.14, 0.10, 0.56).into(),
-                Color::srgba(0.015, 0.03, 0.035, 0.86).into(),
-            ])),
+            BackgroundGradient::from(screen_gradient),
             ScreenRoot(state),
             Visibility::Hidden,
             GlobalZIndex(20),
@@ -470,14 +508,38 @@ fn create_screen(
                 } else {
                     AlignItems::Center
                 },
-                row_gap: Val::Px(if split_layout { 0.0 } else { 14.0 }),
-                padding: UiRect::all(Val::Px(if split_layout { 0.0 } else { 30.0 })),
+                row_gap: Val::Px(if split_layout {
+                    0.0
+                } else if compact_inventory {
+                    9.0
+                } else {
+                    14.0
+                }),
+                padding: UiRect::all(Val::Px(if split_layout {
+                    0.0
+                } else if compact_inventory {
+                    16.0
+                } else {
+                    30.0
+                })),
                 border: UiRect::all(Val::Px(1.0)),
-                border_radius: BorderRadius::all(Val::Px(20.0)),
+                border_radius: BorderRadius::all(Val::Px(if compact_inventory {
+                    8.0
+                } else {
+                    20.0
+                })),
                 ..default()
             },
-            BackgroundColor(PANEL_COLOR),
-            BorderColor::all(SOFT_BORDER),
+            BackgroundColor(if compact_inventory {
+                INVENTORY_PANEL_COLOR
+            } else {
+                PANEL_COLOR
+            }),
+            BorderColor::all(if compact_inventory {
+                INVENTORY_BORDER_COLOR
+            } else {
+                SOFT_BORDER
+            }),
             BoxShadow::new(
                 Color::srgba(0.0, 0.0, 0.0, 0.58),
                 Val::Px(0.0),
@@ -1737,48 +1799,172 @@ fn setup_inventory(commands: &mut Commands, icons: &BlockIconAssets, hotbar: &Ho
     let panel = create_screen(
         commands,
         GameState::Inventory,
-        Color::srgba(0.015, 0.025, 0.032, 0.86),
-        820.0,
+        Color::srgba(0.015, 0.025, 0.032, 0.32),
+        640.0,
     );
+
+    const TERRAIN_BLOCKS: &[Block] = &[
+        Block::Grass,
+        Block::Dirt,
+        Block::Stone,
+        Block::Sand,
+        Block::Snow,
+        Block::Gravel,
+        Block::Bedrock,
+        Block::Clay,
+        Block::Sandstone,
+        Block::CoalOre,
+        Block::IronOre,
+        Block::CopperOre,
+        Block::DiamondOre,
+        Block::Netherrack,
+        Block::Ice,
+    ];
+    const NATURE_BLOCKS: &[Block] = &[
+        Block::OakPlanks,
+        Block::OakLog,
+        Block::SprucePlanks,
+        Block::BirchPlanks,
+        Block::OakLeaves,
+        Block::Cactus,
+        Block::Pumpkin,
+    ];
+    const BUILDING_BLOCKS: &[Block] = &[
+        Block::Cobblestone,
+        Block::MossyCobblestone,
+        Block::StoneBricks,
+        Block::Bricks,
+        Block::Glass,
+        Block::WhiteWool,
+        Block::RedWool,
+        Block::BlueWool,
+        Block::Obsidian,
+        Block::GoldBlock,
+        Block::EmeraldBlock,
+        Block::Glowstone,
+        Block::Prismarine,
+        Block::Terracotta,
+        Block::QuartzBlock,
+    ];
+
     commands.entity(panel).with_children(|panel| {
-        add_badge(panel, "YOUR BLOCK COLLECTION", true);
-        add_label(panel, "BLOCK PICKER", 30.0, TEXT_COLOR);
-        panel.spawn((
-            Text::new(""),
-            TextFont {
-                font_size: FontSize::Px(16.0),
-                ..default()
-            },
-            TextColor(MUTED_TEXT_COLOR),
-            TextLayout::justify(Justify::Center),
-            Node {
-                width: Val::Percent(100.0),
-                min_height: Val::Px(28.0),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                ..default()
-            },
-            InventoryHint,
-        ));
         panel
             .spawn((
                 Node {
                     width: Val::Percent(100.0),
                     flex_direction: FlexDirection::Row,
-                    flex_wrap: FlexWrap::Wrap,
+                    justify_content: JustifyContent::SpaceBetween,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                BackgroundColor(Color::NONE),
+            ))
+            .with_children(|header| {
+                header.spawn((
+                    Text::new("Inventory"),
+                    TextFont {
+                        font_size: FontSize::Px(20.0),
+                        ..default()
+                    },
+                    TextColor(INVENTORY_TEXT_COLOR),
+                    TextLayout::no_wrap(),
+                ));
+                header.spawn((
+                    Text::new(format!("{} blocks", Block::SOLID_PICKER.len())),
+                    TextFont {
+                        font_size: FontSize::Px(12.0),
+                        ..default()
+                    },
+                    TextColor(INVENTORY_MUTED_TEXT),
+                    TextLayout::no_wrap(),
+                ));
+                add_inventory_close_button(header);
+            });
+        panel
+            .spawn((
+                Node {
+                    width: Val::Percent(100.0),
+                    flex_direction: FlexDirection::Row,
                     justify_content: JustifyContent::Center,
-                    column_gap: Val::Px(9.0),
-                    row_gap: Val::Px(9.0),
+                    column_gap: Val::Px(8.0),
+                    ..default()
+                },
+                BackgroundColor(Color::NONE),
+            ))
+            .with_children(|tabs| {
+                add_inventory_category_tab(
+                    tabs,
+                    InventoryCategory::Terrain,
+                    "Terrain",
+                    icons.get(Block::Grass),
+                );
+                add_inventory_category_tab(
+                    tabs,
+                    InventoryCategory::Nature,
+                    "Nature",
+                    icons.get(Block::OakLog),
+                );
+                add_inventory_category_tab(
+                    tabs,
+                    InventoryCategory::Building,
+                    "Building",
+                    icons.get(Block::Bricks),
+                );
+            });
+        add_inventory_category(
+            panel,
+            InventoryCategory::Terrain,
+            "Terrain & Stone",
+            TERRAIN_BLOCKS,
+            icons,
+        );
+        add_inventory_category(
+            panel,
+            InventoryCategory::Nature,
+            "Wood & Nature",
+            NATURE_BLOCKS,
+            icons,
+        );
+        add_inventory_category(
+            panel,
+            InventoryCategory::Building,
+            "Building & Decor",
+            BUILDING_BLOCKS,
+            icons,
+        );
+
+        panel
+            .spawn((
+                Node {
+                    width: Val::Percent(100.0),
+                    flex_direction: FlexDirection::Row,
+                    justify_content: JustifyContent::SpaceBetween,
+                    align_items: AlignItems::Center,
                     ..default()
                 },
                 BackgroundColor(Color::NONE),
             ))
             .with_children(|row| {
-                for block in Block::SOLID_PICKER {
-                    add_block_picker_button(row, block, icons.get(block));
-                }
+                row.spawn((
+                    Text::new("HOTBAR LOADOUT"),
+                    TextFont {
+                        font_size: FontSize::Px(12.0),
+                        ..default()
+                    },
+                    TextColor(ACCENT_COLOR),
+                    TextLayout::no_wrap(),
+                ));
+                row.spawn((
+                    Text::new(""),
+                    TextFont {
+                        font_size: FontSize::Px(12.0),
+                        ..default()
+                    },
+                    TextColor(INVENTORY_MUTED_TEXT),
+                    TextLayout::no_wrap(),
+                    InventoryHint,
+                ));
             });
-        add_label(panel, "HOTBAR LOADOUT", 14.0, ACCENT_COLOR);
         panel
             .spawn((
                 Node {
@@ -1786,9 +1972,10 @@ fn setup_inventory(commands: &mut Commands, icons: &BlockIconAssets, hotbar: &Ho
                     flex_direction: FlexDirection::Row,
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
-                    column_gap: Val::Px(4.0),
+                    column_gap: Val::Px(8.0),
                     padding: UiRect::all(Val::Px(8.0)),
-                    border_radius: BorderRadius::all(Val::Px(12.0)),
+                    border: UiRect::all(Val::Px(1.0)),
+                    border_radius: BorderRadius::all(Val::Px(4.0)),
                     ..default()
                 },
                 BackgroundColor(CARD_ALT_COLOR),
@@ -1796,23 +1983,14 @@ fn setup_inventory(commands: &mut Commands, icons: &BlockIconAssets, hotbar: &Ho
             ))
             .with_children(|row| {
                 for (slot, block) in hotbar.slots.iter().copied().enumerate() {
-                    add_hotbar_button(row, slot, icons.get(block));
+                    add_inventory_hotbar_button(row, slot, icons.get(block));
                 }
             });
-        add_button(
-            panel,
-            "Back to Game",
-            UiAction::ResumeGame,
-            300.0,
-            48.0,
-            None,
-            None,
-        );
         add_label(
             panel,
-            "Click a block to pick it up, then click a hotbar slot. Press E or Escape to close.",
-            13.0,
-            MUTED_TEXT_COLOR,
+            "E or Esc to close | Drag blocks onto a hotbar slot",
+            11.0,
+            INVENTORY_MUTED_TEXT,
         );
     });
 
@@ -1860,6 +2038,169 @@ fn setup_inventory(commands: &mut Commands, icons: &BlockIconAssets, hotbar: &Ho
         Visibility::Hidden,
         GlobalZIndex(40),
     ));
+}
+
+fn add_inventory_category(
+    parent: &mut ChildSpawnerCommands<'_>,
+    category_kind: InventoryCategory,
+    title: &str,
+    blocks: &[Block],
+    icons: &BlockIconAssets,
+) {
+    parent
+        .spawn((
+            Node {
+                width: Val::Percent(100.0),
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(7.0),
+                ..default()
+            },
+            BackgroundColor(Color::NONE),
+            InventoryCategoryPanel(category_kind),
+        ))
+        .with_children(|category| {
+            category
+                .spawn((
+                    Node {
+                        width: Val::Percent(100.0),
+                        flex_direction: FlexDirection::Row,
+                        justify_content: JustifyContent::SpaceBetween,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    BackgroundColor(Color::NONE),
+                ))
+                .with_children(|header| {
+                    header.spawn((
+                        Text::new(title),
+                        TextFont {
+                            font_size: FontSize::Px(13.0),
+                            ..default()
+                        },
+                        TextColor(INVENTORY_TEXT_COLOR),
+                        TextLayout::no_wrap(),
+                    ));
+                    header.spawn((
+                        Text::new(format!("{:02}", blocks.len())),
+                        TextFont {
+                            font_size: FontSize::Px(12.0),
+                            ..default()
+                        },
+                        TextColor(INVENTORY_MUTED_TEXT),
+                        TextLayout::no_wrap(),
+                    ));
+                });
+
+            category
+                .spawn((
+                    Node {
+                        width: Val::Percent(100.0),
+                        flex_direction: FlexDirection::Row,
+                        flex_wrap: FlexWrap::Wrap,
+                        justify_content: JustifyContent::Center,
+                        column_gap: Val::Px(5.0),
+                        row_gap: Val::Px(5.0),
+                        ..default()
+                    },
+                    BackgroundColor(Color::NONE),
+                ))
+                .with_children(|grid| {
+                    for block in blocks {
+                        add_block_picker_button(grid, *block, icons.get(*block));
+                    }
+                });
+        });
+}
+
+fn add_inventory_category_tab(
+    parent: &mut ChildSpawnerCommands<'_>,
+    category: InventoryCategory,
+    label: &str,
+    icon: Handle<Image>,
+) {
+    let mut button = parent.spawn((
+        Button,
+        Hovered::default(),
+        MenuButtonAction(UiAction::SelectInventoryCategory(category)),
+        InventoryCategoryTab(category),
+        ButtonPalette {
+            idle: INVENTORY_TAB_COLOR,
+            hover: INVENTORY_TAB_HOVER,
+            pressed: INVENTORY_TAB_PRESSED,
+        },
+        Node {
+            width: Val::Px(145.0),
+            height: Val::Px(34.0),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            flex_direction: FlexDirection::Row,
+            column_gap: Val::Px(5.0),
+            border: UiRect::all(Val::Px(1.0)),
+            border_radius: BorderRadius::all(Val::Px(3.0)),
+            ..default()
+        },
+        BorderColor::all(INVENTORY_BORDER_COLOR),
+        BackgroundColor(INVENTORY_TAB_COLOR),
+    ));
+    button.with_children(|button| {
+        button.spawn((
+            ImageNode::new(icon),
+            Node {
+                width: Val::Px(23.0),
+                height: Val::Px(23.0),
+                ..default()
+            },
+            Pickable::IGNORE,
+        ));
+        button.spawn((
+            Text::new(label),
+            TextFont {
+                font_size: FontSize::Px(12.0),
+                ..default()
+            },
+            TextColor(INVENTORY_TEXT_COLOR),
+            TextLayout::no_wrap(),
+            Pickable::IGNORE,
+        ));
+    });
+    button.observe(on_menu_action);
+}
+
+fn add_inventory_close_button(parent: &mut ChildSpawnerCommands<'_>) {
+    let mut button = parent.spawn((
+        Button,
+        Hovered::default(),
+        MenuButtonAction(UiAction::ResumeGame),
+        ButtonPalette {
+            idle: INVENTORY_TAB_COLOR,
+            hover: INVENTORY_TAB_HOVER,
+            pressed: INVENTORY_TAB_PRESSED,
+        },
+        Node {
+            width: Val::Px(30.0),
+            height: Val::Px(28.0),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            border: UiRect::all(Val::Px(1.0)),
+            border_radius: BorderRadius::all(Val::Px(3.0)),
+            ..default()
+        },
+        BorderColor::all(INVENTORY_BORDER_COLOR),
+        BackgroundColor(INVENTORY_TAB_COLOR),
+    ));
+    button.with_children(|button| {
+        button.spawn((
+            Text::new("X"),
+            TextFont {
+                font_size: FontSize::Px(20.0),
+                ..default()
+            },
+            TextColor(INVENTORY_TEXT_COLOR),
+            TextLayout::no_wrap(),
+            Pickable::IGNORE,
+        ));
+    });
+    button.observe(on_menu_action);
 }
 
 fn setup_hotbar(commands: &mut Commands, icons: &BlockIconAssets) {
@@ -2233,38 +2574,83 @@ fn add_hotbar_button(parent: &mut ChildSpawnerCommands<'_>, slot: usize, icon: H
     button.observe(on_inventory_hotbar_drop);
 }
 
-fn add_block_picker_button(
+fn add_inventory_hotbar_button(
     parent: &mut ChildSpawnerCommands<'_>,
-    block: Block,
+    slot: usize,
     icon: Handle<Image>,
 ) {
-    let tint = block_tint(block);
     let mut button = parent.spawn((
         Button,
         Hovered::default(),
-        InventoryBlockPicker(block),
-        ButtonTint(tint),
+        MenuButtonAction(UiAction::SelectHotbar(slot)),
+        HotbarSlot(slot),
+        ButtonPalette {
+            idle: INVENTORY_SLOT_COLOR,
+            hover: INVENTORY_SLOT_HOVER,
+            pressed: INVENTORY_SLOT_PRESSED,
+        },
         Node {
-            width: Val::Px(74.0),
-            height: Val::Px(74.0),
-            flex_direction: FlexDirection::Column,
+            width: Val::Px(52.0),
+            height: Val::Px(52.0),
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
-            row_gap: Val::Px(0.0),
-            padding: UiRect::all(Val::Px(6.0)),
-            border: UiRect::all(Val::Px(1.0)),
-            border_radius: BorderRadius::all(Val::Px(9.0)),
+            padding: UiRect::all(Val::Px(3.0)),
+            border: UiRect::all(Val::Px(2.0)),
+            border_radius: BorderRadius::all(Val::Px(2.0)),
             ..default()
         },
-        BorderColor::all(SOFT_BORDER),
-        BackgroundColor(tint),
+        BorderColor::all(INVENTORY_BORDER_COLOR),
+        BackgroundColor(INVENTORY_SLOT_COLOR),
     ));
     button.with_children(|button| {
         button.spawn((
             ImageNode::new(icon),
             Node {
-                width: Val::Px(60.0),
-                height: Val::Px(60.0),
+                width: Val::Px(44.0),
+                height: Val::Px(44.0),
+                ..default()
+            },
+            HotbarIcon(slot),
+            Pickable::IGNORE,
+        ));
+    });
+    button.observe(on_menu_action);
+    button.observe(on_inventory_hotbar_drop);
+}
+
+fn add_block_picker_button(
+    parent: &mut ChildSpawnerCommands<'_>,
+    block: Block,
+    icon: Handle<Image>,
+) {
+    let mut button = parent.spawn((
+        Button,
+        Hovered::default(),
+        InventoryBlockPicker(block),
+        ButtonPalette {
+            idle: INVENTORY_SLOT_COLOR,
+            hover: INVENTORY_SLOT_HOVER,
+            pressed: INVENTORY_SLOT_PRESSED,
+        },
+        Node {
+            width: Val::Px(52.0),
+            height: Val::Px(52.0),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            padding: UiRect::all(Val::Px(3.0)),
+            border: UiRect::all(Val::Px(2.0)),
+            border_radius: BorderRadius::all(Val::Px(2.0)),
+            ..default()
+        },
+        BorderColor::all(INVENTORY_BORDER_COLOR),
+        BackgroundColor(INVENTORY_SLOT_COLOR),
+    ));
+    button.with_children(|button| {
+        button.spawn((
+            ImageNode::new(icon),
+            Node {
+                width: Val::Px(44.0),
+                height: Val::Px(44.0),
                 ..default()
             },
             Pickable::IGNORE,
@@ -2584,6 +2970,9 @@ fn on_menu_action(
             }
             hotbar.select_slot(slot);
         }
+        UiAction::SelectInventoryCategory(category) => {
+            *interaction.inventory_category = category;
+        }
     }
 }
 
@@ -2702,6 +3091,22 @@ fn update_options_page_visibility(
     }
 }
 
+fn update_inventory_category_visibility(
+    category: Res<InventoryCategory>,
+    mut panels: Query<(&InventoryCategoryPanel, &mut Node)>,
+) {
+    for (panel_category, mut node) in &mut panels {
+        let display = if panel_category.0 == *category {
+            Display::Flex
+        } else {
+            Display::None
+        };
+        if node.display != display {
+            node.display = display;
+        }
+    }
+}
+
 type ButtonAppearanceQuery<'w, 's> = Query<
     'w,
     's,
@@ -2709,6 +3114,8 @@ type ButtonAppearanceQuery<'w, 's> = Query<
         &'static Hovered,
         Has<Pressed>,
         Option<&'static HotbarSlot>,
+        Option<&'static InventoryCategoryTab>,
+        Option<&'static InventoryBlockPicker>,
         Option<&'static ButtonTint>,
         Option<&'static ButtonPalette>,
         &'static mut Node,
@@ -2718,12 +3125,31 @@ type ButtonAppearanceQuery<'w, 's> = Query<
     With<Button>,
 >;
 
-fn update_button_appearance(hotbar: Res<Hotbar>, mut buttons: ButtonAppearanceQuery) {
-    for (hovered, pressed, hotbar_slot, tint, palette, mut node, mut background, mut border) in
-        &mut buttons
+fn update_button_appearance(
+    hotbar: Res<Hotbar>,
+    inventory_category: Res<InventoryCategory>,
+    mut buttons: ButtonAppearanceQuery,
+) {
+    for (
+        hovered,
+        pressed,
+        hotbar_slot,
+        category_tab,
+        inventory_slot,
+        tint,
+        palette,
+        mut node,
+        mut background,
+        mut border,
+    ) in &mut buttons
     {
         let selected = hotbar_slot.is_some_and(|slot| slot.0 == hotbar.selected);
-        let color = if selected {
+        let selected_tab = category_tab.is_some_and(|tab| tab.0 == *inventory_category);
+        let is_inventory_slot = inventory_slot.is_some();
+        let is_inventory_tab = category_tab.is_some();
+        let color = if selected_tab {
+            INVENTORY_TAB_SELECTED
+        } else if selected {
             ACCENT_BUTTON_COLOR
         } else if let Some(palette) = palette {
             if pressed {
@@ -2741,14 +3167,18 @@ fn update_button_appearance(hotbar: Res<Hotbar>, mut buttons: ButtonAppearanceQu
             tint.map_or(BUTTON_COLOR, |tint| tint.0)
         };
         background.0 = color;
-        border.set_all(if selected {
+        border.set_all(if selected || selected_tab {
             ACCENT_COLOR
         } else if hovered.0 || pressed {
             Color::srgba(0.78, 0.86, 0.66, 0.62)
+        } else if is_inventory_slot || is_inventory_tab {
+            INVENTORY_BORDER_COLOR
         } else {
             SOFT_BORDER
         });
-        if hotbar_slot.is_some() {
+        if is_inventory_slot {
+            node.border = UiRect::all(Val::Px(2.0));
+        } else if hotbar_slot.is_some() {
             node.border = UiRect::all(Val::Px(if selected { 2.0 } else { 1.0 }));
         }
     }
@@ -3596,11 +4026,6 @@ fn update_debug_text(
         target,
         velocity.0.length()
     );
-}
-
-fn block_tint(block: Block) -> Color {
-    let color = block.face_color(2);
-    Color::linear_rgba(color.x * 0.55, color.y * 0.55, color.z * 0.55, 1.0)
 }
 
 const BLOCK_ICON_SIZE: u32 = 48;

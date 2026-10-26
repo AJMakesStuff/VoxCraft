@@ -31,6 +31,7 @@ pub struct LoadedChunk {
     pub data: ChunkData,
     pub entity: Option<Entity>,
     pub water_entity: Option<Entity>,
+    pub transparent_entity: Option<Entity>,
 }
 
 #[derive(Resource)]
@@ -225,6 +226,9 @@ fn update_chunk_targets(
                 if let Some(entity) = chunk.water_entity {
                     commands.entity(entity).despawn();
                 }
+                if let Some(entity) = chunk.transparent_entity {
+                    commands.entity(entity).despawn();
+                }
             }
         }
     }
@@ -288,6 +292,7 @@ fn finish_chunk_tasks(
                     data,
                     entity: None,
                     water_entity: None,
+                    transparent_entity: None,
                 },
             );
             continue;
@@ -299,6 +304,7 @@ fn finish_chunk_tasks(
                 data,
                 entity: None,
                 water_entity: None,
+                transparent_entity: None,
             },
         );
         let overrides = world.overrides.clone();
@@ -379,6 +385,19 @@ fn finish_chunk_mesh_tasks(
                     .id(),
             );
         }
+        if !chunk_mesh.transparent.is_empty() {
+            let mesh = meshes.add(chunk_mesh.transparent.into_mesh());
+            chunk.transparent_entity = Some(
+                commands
+                    .spawn((
+                        Mesh3d(mesh),
+                        MeshMaterial3d(materials.glass.clone()),
+                        Transform::from_translation(coord.origin().as_vec3()),
+                        ChunkTag,
+                    ))
+                    .id(),
+            );
+        }
     }
 }
 
@@ -386,6 +405,7 @@ fn finish_chunk_mesh_tasks(
 pub struct WorldMaterial {
     pub terrain: Handle<StandardMaterial>,
     pub water: Handle<StandardMaterial>,
+    pub glass: Handle<StandardMaterial>,
 }
 
 pub fn rebuild_chunk_mesh(
@@ -402,6 +422,9 @@ pub fn rebuild_chunk_mesh(
             commands.entity(entity).despawn();
         }
         if let Some(entity) = chunk.water_entity {
+            commands.entity(entity).despawn();
+        }
+        if let Some(entity) = chunk.transparent_entity {
             commands.entity(entity).despawn();
         }
     }
@@ -436,9 +459,25 @@ pub fn rebuild_chunk_mesh(
                 .id(),
         )
     };
+    let transparent_entity = if mesh_data.transparent.is_empty() {
+        None
+    } else {
+        let mesh = meshes.add(mesh_data.transparent.into_mesh());
+        Some(
+            commands
+                .spawn((
+                    Mesh3d(mesh),
+                    MeshMaterial3d(material.glass.clone()),
+                    Transform::from_translation(coord.origin().as_vec3()),
+                    ChunkTag,
+                ))
+                .id(),
+        )
+    };
     if let Some(chunk) = world.chunks.get_mut(&coord) {
         chunk.entity = entity;
         chunk.water_entity = water_entity;
+        chunk.transparent_entity = transparent_entity;
     }
 }
 
@@ -456,6 +495,7 @@ mod tests {
                 data: ChunkData::default(),
                 entity: None,
                 water_entity: None,
+                transparent_entity: None,
             },
         );
         let pos = IVec3::new(15, 10, 7);
@@ -476,6 +516,7 @@ mod tests {
                 data: ChunkData::default(),
                 entity: None,
                 water_entity: None,
+                transparent_entity: None,
             },
         );
         world.overrides.insert(IVec3::new(1, 2, 3), Block::Stone);

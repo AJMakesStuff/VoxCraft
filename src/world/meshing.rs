@@ -25,6 +25,7 @@ pub struct ChunkMesh {
 pub struct ChunkMeshes {
     pub solid: ChunkMesh,
     pub water: ChunkMesh,
+    pub transparent: ChunkMesh,
 }
 
 impl ChunkMesh {
@@ -129,6 +130,7 @@ fn build_chunk_mesh_using(
                     continue;
                 }
                 let is_water = block == Block::Water;
+                let is_glass = block == Block::Glass;
                 for (face_id, (normal_i, corners)) in FACES.iter().enumerate() {
                     let normal = IVec3::new(normal_i[0], normal_i[1], normal_i[2]);
                     let neighbor_local = local + normal;
@@ -149,13 +151,17 @@ fn build_chunk_mesh_using(
                     };
                     if if is_water {
                         neighbor.is_solid() || neighbor == Block::Water
+                    } else if is_glass {
+                        neighbor.is_opaque() || neighbor == Block::Glass
                     } else {
-                        neighbor.is_solid()
+                        neighbor.is_opaque()
                     } {
                         continue;
                     }
                     let mesh = if is_water {
                         &mut meshes.water
+                    } else if is_glass {
+                        &mut meshes.transparent
                     } else {
                         &mut meshes.solid
                     };
@@ -307,6 +313,7 @@ mod tests {
                 data: chunk,
                 entity: None,
                 water_entity: None,
+                transparent_entity: None,
             },
         );
 
@@ -328,6 +335,7 @@ mod tests {
                 data: chunk,
                 entity: None,
                 water_entity: None,
+                transparent_entity: None,
             },
         );
         world.overrides.insert(IVec3::new(16, 40, 5), Block::Dirt);
@@ -350,6 +358,7 @@ mod tests {
                 data: chunk.clone(),
                 entity: None,
                 water_entity: None,
+                transparent_entity: None,
             },
         );
 

@@ -152,6 +152,29 @@ pub(crate) fn block_texture_pixel(block: Block, x: u32, y: u32) -> u8 {
         Block::Gravel => (235, 28),
         Block::Obsidian => (20, 7),
         Block::GoldBlock => (244, 14),
+        Block::SprucePlanks => (232, 24),
+        Block::BirchPlanks => (246, 13),
+        Block::Sandstone => (244, 18),
+        Block::StoneBricks => (236, 24),
+        Block::MossyCobblestone => (230, 35),
+        Block::Clay => (238, 17),
+        Block::CoalOre => (231, 23),
+        Block::IronOre => (232, 24),
+        Block::CopperOre => (232, 25),
+        Block::DiamondOre => (238, 22),
+        Block::EmeraldBlock => (244, 13),
+        Block::Glass => (250, 4),
+        Block::WhiteWool => (244, 10),
+        Block::RedWool | Block::BlueWool => (239, 20),
+        Block::Cactus => (236, 20),
+        Block::OakLeaves => (232, 28),
+        Block::Glowstone => (239, 18),
+        Block::Netherrack => (227, 31),
+        Block::Ice => (250, 5),
+        Block::Pumpkin => (237, 20),
+        Block::Prismarine => (234, 26),
+        Block::Terracotta => (235, 20),
+        Block::QuartzBlock => (248, 8),
         Block::Water => (255, 0),
     };
 
@@ -179,7 +202,7 @@ pub(crate) fn block_texture_pixel(block: Block, x: u32, y: u32) -> u8 {
         (base + grain + fleck).clamp(190, 255)
     };
     match block {
-        Block::OakPlanks => {
+        Block::OakPlanks | Block::SprucePlanks | Block::BirchPlanks => {
             let plank_row = y / 5;
             let row_pixel = y % 5;
             let joint_x = (plank_row * 5 + 4) % BLOCK_TEXTURE_SIZE;
@@ -187,6 +210,15 @@ pub(crate) fn block_texture_pixel(block: Block, x: u32, y: u32) -> u8 {
                 150
             } else if row_pixel == 1 {
                 (grain_value + 8).clamp(190, 255) as u8
+            } else {
+                grain_value as u8
+            }
+        }
+        Block::Sandstone => {
+            if y % 5 == 0 {
+                177
+            } else if y % 5 == 1 {
+                (grain_value + 4).clamp(190, 255) as u8
             } else {
                 grain_value as u8
             }
@@ -215,6 +247,32 @@ pub(crate) fn block_texture_pixel(block: Block, x: u32, y: u32) -> u8 {
                 158
             } else if y % 4 == 1 {
                 (grain_value + 7).clamp(190, 255) as u8
+            } else {
+                grain_value as u8
+            }
+        }
+        Block::StoneBricks | Block::MossyCobblestone => {
+            let row_offset = (y / 5) % 2 * 4;
+            let seam = y % 5 == 0 || (x + row_offset) % 8 == 0;
+            let moss = block == Block::MossyCobblestone && hash.rotate_left(7) % 5 == 0;
+            if seam {
+                160
+            } else if moss {
+                (grain_value - 36).clamp(160, 255) as u8
+            } else {
+                grain_value as u8
+            }
+        }
+        Block::CoalOre | Block::IronOre | Block::CopperOre | Block::DiamondOre => {
+            let ore_spot = hash.rotate_left(9) % 9 == 0 || hash.rotate_left(17) % 23 == 0;
+            if ore_spot {
+                match block {
+                    Block::CoalOre => 82,
+                    Block::IronOre => 177,
+                    Block::CopperOre => 166,
+                    Block::DiamondOre => 206,
+                    _ => grain_value as u8,
+                }
             } else {
                 grain_value as u8
             }
@@ -258,6 +316,61 @@ pub(crate) fn block_texture_pixel(block: Block, x: u32, y: u32) -> u8 {
                 171
             } else if highlight {
                 255
+            } else {
+                grain_value as u8
+            }
+        }
+        Block::Glass | Block::Ice => {
+            if x % 8 == 0 || y % 8 == 0 {
+                224
+            } else if block == Block::Ice && (x + y * 3) % 17 == 0 {
+                239
+            } else {
+                grain_value as u8
+            }
+        }
+        Block::Cactus => {
+            if x % 7 == 0 {
+                179
+            } else if y % 6 == 0 {
+                (grain_value + 8).clamp(190, 255) as u8
+            } else {
+                grain_value as u8
+            }
+        }
+        Block::OakLeaves => {
+            if hash.rotate_left(5) % 4 == 0 {
+                (grain_value - 38).clamp(170, 255) as u8
+            } else {
+                grain_value as u8
+            }
+        }
+        Block::Glowstone | Block::Prismarine => {
+            let cell = (x / 4 + (y / 4) * 4).wrapping_mul(37);
+            let cell_shade = (cell % 17) as i32 - 8;
+            if x % 4 == 0 || y % 4 == 0 {
+                (grain_value - 24).clamp(180, 255) as u8
+            } else {
+                (grain_value + cell_shade).clamp(190, 255) as u8
+            }
+        }
+        Block::Netherrack => {
+            if hash.rotate_left(11) % 7 == 0 {
+                (grain_value - 42).clamp(170, 255) as u8
+            } else {
+                grain_value as u8
+            }
+        }
+        Block::Pumpkin => {
+            if x % 4 == 0 {
+                (grain_value - 31).clamp(175, 255) as u8
+            } else {
+                grain_value as u8
+            }
+        }
+        Block::QuartzBlock => {
+            if y % 6 == 0 {
+                (grain_value - 20).clamp(190, 255) as u8
             } else {
                 grain_value as u8
             }

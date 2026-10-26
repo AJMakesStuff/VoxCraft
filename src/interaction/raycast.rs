@@ -264,10 +264,8 @@ fn edit_block(params: BlockEditParams) {
     let mut broken = None;
     if buttons.just_pressed(MouseButton::Left) {
         let block = world.block_at(hit.block);
-        if block != Block::Bedrock {
-            edited = Some((hit.block, Block::Air));
-            broken = Some((hit.block, block));
-        }
+        edited = Some((hit.block, Block::Air));
+        broken = Some((hit.block, block));
     } else if buttons.just_pressed(MouseButton::Middle) {
         let block = match world.block_at(hit.block) {
             Block::OakLogX | Block::OakLogZ => Block::OakLog,

@@ -34,7 +34,7 @@ Render distance is measured in horizontal chunks and is clamped to 2–16. Mouse
 | Space while flying | Rise |
 | Left Ctrl | Dive while swimming; descend while flying (touching down exits flight) |
 | Left Shift | Sprint and move faster while flying |
-| Left mouse | Break targeted block (bedrock is unbreakable) |
+| Left mouse | Break targeted block |
 | Middle mouse | Pick the targeted block into the selected hotbar slot |
 | Right mouse | Place selected block; oak logs align to the face you place against |
 | 1–5 | Select a hotbar slot |
@@ -45,12 +45,12 @@ Render distance is measured in horizontal chunks and is clamped to 2–16. Mouse
 
 ## Architecture
 
-- `src/world/` defines block types, negative-safe coordinate conversion, seeded terrain with ocean shelves and inland lake basins, chunk storage, streaming, and combined exposed-face meshes. Water uses translucent PBR shading with animated flowing normal maps and darker depth tinting, and remains non-colliding.
+- `src/world/` defines block types, negative-safe coordinate conversion, seeded terrain with ocean shelves and inland lake basins, chunk storage, streaming, and combined exposed-face meshes. Water uses translucent PBR shading with animated flowing normal maps and darker depth tinting; glass uses a separate alpha-blended mesh and remains collidable.
 - `src/player/` contains the first-person camera, mouse look, movement, gravity, jumping, sprinting, flight, buoyant swimming, and an axis-aligned collision controller.
 - `src/mobs.rs` spawns up to 20 wandering pigs, spread across the loaded area on dry terrain in each world session.
 - `src/interaction/` contains a voxel grid raycast, block selection, breaking particles, placement, and outline drawing.
 - `src/rendering/` sets up the directional sunlight, ambient light, world material, blue sky clear color, and applies the selected MSAA level to the player camera.
-- `src/ui/` creates the main menu, mouse sensitivity, graphics, and world/time options (including day/night cycle speed), pause menu, image-only square hotbar and block picker, crosshair, and F3 debug text. Block cube icons are generated from the block face colors at startup.
+- `src/ui/` creates the main menu, mouse sensitivity, graphics, and world/time options (including day/night cycle speed), pause menu, image-only square hotbar, and a categorized block library with 37 placeable blocks. Block cube icons are generated from the block face colors at startup.
 
 Graphics options apply immediately. Adaptive V-Sync uses the backend's adaptive presentation mode when available; G-Sync and FreeSync remain controlled by the graphics driver. The HDR option enables Bevy's higher-precision camera rendering path, but Bevy does not currently provide HDR output to the monitor.
 
