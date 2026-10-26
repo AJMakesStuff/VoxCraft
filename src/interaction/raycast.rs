@@ -134,15 +134,24 @@ pub fn raycast_blocks(
         previous = cell;
         if max.x < max.y && max.x < max.z {
             distance = max.x;
-            cell.x += step.x;
+            let Some(next) = cell.x.checked_add(step.x) else {
+                return None;
+            };
+            cell.x = next;
             max.x += delta.x;
         } else if max.y < max.z {
             distance = max.y;
-            cell.y += step.y;
+            let Some(next) = cell.y.checked_add(step.y) else {
+                return None;
+            };
+            cell.y = next;
             max.y += delta.y;
         } else {
             distance = max.z;
-            cell.z += step.z;
+            let Some(next) = cell.z.checked_add(step.z) else {
+                return None;
+            };
+            cell.z = next;
             max.z += delta.z;
         }
         if distance > reach {
@@ -345,6 +354,13 @@ mod tests {
         world.overrides.insert(IVec3::new(0, 20, 0), Block::Stone);
 
         assert!(raycast_blocks(Vec3::new(0.5, 20.5, 0.5), Vec3::X, -1.0, &world).is_none());
+    }
+
+    #[test]
+    fn raycast_at_integer_limit_does_not_overflow() {
+        let world = WorldData::new(23_041, 8);
+
+        assert!(raycast_blocks(Vec3::new(f32::MAX, 100.5, 0.5), Vec3::X, 5.0, &world).is_none());
     }
 
     #[test]
