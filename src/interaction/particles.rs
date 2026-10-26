@@ -8,7 +8,7 @@ const PARTICLE_LIFETIME_SECS: f32 = 0.55;
 #[derive(Resource)]
 pub(super) struct BlockParticleAssets {
     mesh: Handle<Mesh>,
-    materials: [Handle<StandardMaterial>; Block::SOLID_PICKER.len()],
+    materials: [Handle<StandardMaterial>; Block::SOLID_PICKER.len() + 1],
 }
 
 #[derive(Component)]
@@ -24,8 +24,12 @@ pub(super) fn setup_block_particle_assets(
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let mesh = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
-    let materials = Block::SOLID_PICKER.map(|block| {
-        let color = block.face_color(0);
+    let materials = std::array::from_fn(|index| {
+        let color = if index == Block::SOLID_PICKER.len() {
+            Block::Water.face_color(0)
+        } else {
+            Block::SOLID_PICKER[index].face_color(0)
+        };
         materials.add(StandardMaterial {
             base_color: Color::linear_rgba(color.x, color.y, color.z, 1.0),
             perceptual_roughness: 1.0,
@@ -45,7 +49,11 @@ pub(super) fn spawn_block_particles(
     if block == Block::Air {
         return;
     }
-    let material_index = block.texture_index();
+    let material_index = if block == Block::Water {
+        Block::SOLID_PICKER.len()
+    } else {
+        block.texture_index()
+    };
     let block_origin = position.as_vec3();
     let material = assets.materials[material_index].clone();
 
@@ -115,6 +123,51 @@ pub(super) fn update_block_particles(
         if particle.lifetime.is_finished() {
             commands.entity(entity).despawn();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::ecs::world::CommandQueue;
+
+    #[test]
+    fn broken_water_uses_water_particle_color() {
+        let mut app = App::new();
+        app.insert_resource(Assets::<Mesh>::default());
+        app.insert_resource(Assets::<StandardMaterial>::default());
+        app.add_systems(Startup, setup_block_particle_assets);
+        app.update();
+
+        let particle_assets = app.world().resource::<BlockParticleAssets>();
+        let mut queue = CommandQueue::default();
+        {
+            let mut commands = Commands::new(&mut queue, app.world());
+            spawn_block_particles(&mut commands, IVec3::ZERO, Block::Water, particle_assets);
+        }
+        queue.apply(app.world_mut());
+
+        let water_material_handle = app
+            .world()
+            .iter_entities()
+            .find_map(|entity| {
+                entity
+                    .get::<MeshMaterial3d<StandardMaterial>>()
+                    .map(|material| material.0.clone())
+            })
+            .expect("water particles should be spawned");
+        let materials = app.world().resource::<Assets<StandardMaterial>>();
+        let color = materials
+            .get(&water_material_handle)
+            .unwrap()
+            .base_color
+            .to_linear();
+        let expected = Block::Water.face_color(0);
+
+        assert_eq!(
+            Vec4::new(color.red, color.green, color.blue, color.alpha),
+            expected
+        );
     }
 }
 
